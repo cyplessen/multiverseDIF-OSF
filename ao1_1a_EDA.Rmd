@@ -1,0 +1,2387 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitle: "1a. Exploratory Data Analysis and Psychometric Investigation"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+  word_document:
+    toc: yes
+    toc_depth: '3'
+always_allow_html: true
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      cache = F,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      out.width = "100%",
+                      fig.align = "center",
+                      dpi = 200)
+
+# Install and load correct package versions
+if(!require(pacman)) install.packages("pacman")
+pacman::p_install_version
+pacman::p_load(tidyverse,
+               ggplot2,
+               lavaanPlot,
+               mirt,
+               ggmirt,
+               haven,
+               semTools,
+               lordif,
+               readxl,
+               arsenal,
+               corrplot,
+               summarytools,
+               hrbrthemes,
+               janitor,
+               car,
+               lavaan,
+               semPlot,
+               psych,
+               nFactors,
+               remotes,
+               finalfit, questionr,
+               raincloudplots,
+               MVN, tidyselect, psych, GPArotation,
+               mokken, qgraph, lavaan, MBESS,
+               ggridges, cowplot)
+
+# Source functions
+source("R/helper-functions.R")
+#devtools::load_all()
+options(scipen = 999)
+```
+
+
+# Data Wrangling
+
+## Load RDA with data from previous step
+```{r}
+load("data/data_complete.rda")
+```
+
+## Inspect Item Overlap
+
+```{r}
+# Item overlap US - German/Arg Dataset
+
+not_all_na <- function(x) any(!is.na(x))
+
+items_arg_ger <- data_complete %>% 
+  filter(country %in% c("ger", "arg")) %>% 
+  dplyr::select(starts_with("PF")) %>% 
+  dplyr::select(where(not_all_na))
+
+items_usa <- data_complete %>% 
+  filter(country %in% c("usa")) %>% 
+  dplyr::select(starts_with("PF")) %>% 
+  dplyr::select(where(not_all_na))
+
+included_items_usa <- colnames(items_usa)
+included_items_usa <- sort(included_items_usa)
+length(included_items_usa)
+
+### Items contained in G/AG data set
+included_items_arg_ger <- colnames(items_arg_ger)
+included_items_arg_ger <- sort(included_items_arg_ger)
+length(included_items_arg_ger)
+
+# Only in US, not in Arg or Ger
+usa_only_items <- setdiff(included_items_usa, included_items_arg_ger)
+usa_only_items
+
+# in all countries
+ceiling_item_names <- intersect(included_items_usa, included_items_arg_ger)
+ceiling_item_names
+
+# only in arg and ger, not in US
+missing_anchor_items <- setdiff(included_items_arg_ger, included_items_usa)
+missing_anchor_items
+```
+
+
+## Preparation of item response data
+
+```{r}
+items_age_gender_country <- data_complete %>% 
+  dplyr::select(country, 
+                gender, 
+                age, 
+                ceiling_item_names)
+
+items.all <- items_age_gender_country %>% 
+  dplyr::select(ceiling_item_names)
+
+items.ger <- items_age_gender_country %>% 
+  filter(country == "ger") %>% 
+  dplyr::select(ceiling_item_names)
+
+items.arg <- items_age_gender_country %>% 
+  filter(country == "arg") %>% 
+  dplyr::select(ceiling_item_names)
+
+items.usa <- items_age_gender_country %>% 
+  filter(country == "usa") %>% 
+  dplyr::select(ceiling_item_names)
+```
+
+
+<br>
+
+
+### Correlation plot using the package `corrplot`
+```{r}
+# Correlation matrix for PF
+items.all %>%
+  cor %>%
+  round(3)
+
+# Correlation plot using the package `corrplot`
+items.all %>% 
+  cor %>%
+  corrplot(method = "color", 
+           addCoef.col = "black", 
+           tl.col = "black")
+```
+
+
+
+
+```{r}
+#### Preparation of item response data ####
+ceiling_items_age_gender_country <- data_complete %>% dplyr::select(country, 
+                                                                    gender, 
+                                                                    age, 
+                                                                    ceiling_item_names)
+
+ceiling_items <- ceiling_items_age_gender_country %>% dplyr::select(ceiling_item_names)
+```
+
+<br>
+
+# Psychometric Investigation: All Countries
+
+## Factorial Structure
+
+### Inspect variables
+```{r}
+items.all %>%
+  psych::describe()
+
+items.all %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.usa %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.ger %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+```
+
+### Inspecting Factorial Structure
+
+#### Multivariate normal distribution check
+
+##### Analysis Explanation:
+
+- The mvn function from the MVN package in R is used to assess multivariate normality of the given data. Multivariate normality is an important assumption in many statistical techniques. Specifically, in the context of Item Response Theory (IRT) for polytomous data, checking the assumption of multivariate normality can be crucial, especially if parametric modeling techniques are employed. The function tests multivariate normality using Mardia's test (as specified by the mvnTest argument). Alongside, it provides visual checks through univariate histograms for each variable and a multivariate Q-Q plot.
+
+##### Interpretation of the Output:
+
+- Mardia's Test: This test provides two statistics - skewness and kurtosis. If the p-value associated with these statistics is below a significance threshold (commonly 0.05), it indicates significant deviation from multivariate normality.
+
+- Univariate Histograms: For each item in your dataset, a histogram will be plotted. Under the assumption of normality, the distribution of item scores should roughly resemble a bell curve or a normal distribution. Deviations from this shape can indicate non-normality.
+
+- Multivariate Q-Q Plot: This is a graphical method to check multivariate normality. If the data is multivariate normal, the points should fall roughly along a straight line. Deviations from the straight line can be indicative of violations of the multivariate normality assumption.
+
+
+```{r}
+mvn_result <- MVN::mvn(items.all,
+                       mvnTest = "mardia",
+                       #univariatePlot = "histogram",
+                       #multivariatePlot = "qq"
+                       )
+
+##### Multivariate Normality Result
+#mvn_result$multivariateNormality
+#
+#### Univariate Normality Result
+#mvn_result$univariateNormality
+#
+#### Descriptives
+#mvn_result$Descriptives
+#
+#### Multivariate Outliers
+#mvn_result$multivariateOutliers
+```
+
+
+
+### Bartlett's test
+
+#### Analysis Explanation:
+
+- Bartlett's test of sphericity checks if there is a certain structure in the dataset or if the variables in the dataset are uncorrelated. This test is used to validate the factorability of a dataset before factor analysis. Specifically, the test evaluates the hypothesis that your correlation matrix is an identity matrix, which would suggest that the variables are unrelated. In the context of Item Response Theory (IRT), or any other situation involving multiple variables (items), ensuring that there's some correlation structure is important before proceeding with multivariate analysis techniques like factor analysis.
+
+#### Interpretation of the Output:
+
+- Chi-Square Value: This is the test statistic for Bartlett's test of sphericity.
+
+- Degrees of Freedom (df): This represents the number of degrees of freedom for the test.
+- p-value: This is the significance value associated with the test statistic.
+
+If the p-value is less than a chosen significance level (typically 0.05), you would reject the null hypothesis. Rejecting the null hypothesis suggests that there is a significant structure to your data, and it's appropriate to proceed with factor analysis or similar multivariate techniques.
+
+If the p-value is greater than the significance level, it suggests that the correlation matrix might be close to the identity matrix, indicating that the variables might be unrelated. In such a case, factor analysis might not be appropriate or meaningful.
+
+```{r}
+cortest.bartlett(items.all)
+```
+
+### Kaiser-Meyer-Olkin index
+
+#### Analysis Explanation:
+The Kaiser-Meyer-Olkin (KMO) statistic is a measure of the proportion of variance among variables that might be common variance. The KMO measure is often used in factor analysis to determine whether the data is suitable for factor analysis. The value of the KMO statistic varies between 0 and 1. Higher values (close to 1) suggest that factor analysis is appropriate, while values closer to 0 suggest that factor analysis may not be suitable.
+
+#### Interpretation of the Output:
+In his delightfully flamboyant style, Kaiser (1975) suggested that KMO > .9 were marvelous, in the .80s, mertitourious, in the .70s, middling, in the .60s, medicore, in the 50s, miserable, and less than .5, unacceptable.
+
+```{r}
+KMO(items.all)
+```
+
+### Scree Plot
+
+#### Using PCA
+
+##### Analysis Explanation:
+
+The scree plot is a graphical representation of the eigenvalues associated with each factor (or principal component) in descending order. It's named "scree" because the graph typically displays a clear break or "elbow", resembling the scatter of rocks or "scree" at the base of a cliff. This break or "elbow" helps in deciding how many factors to retain. The idea is to retain factors whose eigenvalues are above this break, as they capture more variance than can be expected by chance.
+
+##### Interpretation of the Output:
+The scree plot will display the eigenvalues on the y-axis and the factors (or principal components) on the x-axis. Here's how you interpret the plot:
+Before the Elbow: Factors or components to the left of the elbow represent significant amounts of variance in the data and are typically considered for retention.
+At and After the Elbow: Factors or components at and to the right of the elbow represent smaller and less significant amounts of variance. They are often not retained as they don't add much valuable information and might be a result of noise in the data.
+
+For your analysis with pc = 1, you're looking at a principal component scree plot. This can help in determining the number of principal components to retain.
+
+```{r}
+# Simple scree plot
+scree(items.all, pc = 1) # Factors based on Kaiser Kriterium (Eigenvalues < 1)
+```
+
+
+### Mokken
+
+#### H coefficient
+Mokken Scale Analysis identifies items that form a unidimensional, hierarchical scale. This means that if a respondent correctly answers (or agrees with) a more difficult item, they will also correctly answer (or agree with) less difficult items. AISP automates the process of selecting items that fit the MSA model.
+
+There are two main assumptions in MSA:
+
+Unidimensionality: All items in the scale measure the same construct.
+Monotonicity: An increase in the underlying trait level leads to an increase in the probability of endorsing an item.
+
+AISP helps in identifying items that fit these assumptions, and in creating scales based on the Mokken model.
+
+#### Interpretation of the Output:
+The output of the coefH() function typically provides the following:
+
+Item Scalability Coefficients (Hij): These are pairwise coefficients for all items, which indicate how well pairs of items jointly fit the MSA model.
+
+Overall Scalability Coefficient (Hi): This indicates how well an individual item fits the MSA model when combined with all other items.
+
+Scale Scalability Coefficient (H): This coefficient represents the scalability of the entire scale, and it's analogous to Cronbach's alpha in classical test theory. Higher values (closer to 1) indicate a better fit to the Mokken model.
+
+General guidelines for interpreting the scalability coefficients are:
+
+H > 0.5: Strong scalability
+0.4 < H ≤ 0.5: Moderate scalability
+0.3 < H ≤ 0.4: Weak scalability
+H ≤ 0.3: The scale is not considered scalable.
+
+Additionally, the output may provide information on the selected items for the Mokken scale and any items that were rejected.
+
+```{r}
+mokkenH <- items.all|>
+  as.data.frame() |>
+  coefH()
+
+mokkenH$Hij
+```
+
+
+#### Analysis Explanation:
+
+
+```{r}
+aisp_all <- items.all |>
+  as.data.frame() |>
+  aisp()
+```
+
+### Network visualisation
+
+```{r}
+network(items.all)
+```
+
+## CFA
+
+
+### Parallel Analysis
+
+##### Analysis Explanation:
+
+Parallel analysis is a technique used to decide on the number of factors to retain in factor analysis. Instead of relying solely on eigenvalues from the actual data (as in the scree plot method), parallel analysis compares these eigenvalues with those from random data. The logic is that factors from the actual data should have eigenvalues greater than those that would be obtained from random data to be considered meaningful.
+
+Here are the specifics of your analysis:
+
+fm="minres": You're using the minimum residual method for factor extraction.
+fa="fa": You're conducting a factor analysis (as opposed to principal component analysis).
+cor="poly": You're using polychoric correlations, which are appropriate for ordinal data or polytomous items (like Likert scale responses).
+correct=0: No corrections are applied to the eigenvalues of the random data.
+
+##### Interpretation of the Output:
+
+The output will likely include a plot that shows eigenvalues from your actual data compared with eigenvalues from random data:
+
+Actual Data Eigenvalues: Represented by a line or bars on the plot.
+Random Data Eigenvalues: Often shown by a parallel line or a shaded region.
+
+To interpret:
+
+Above the Random Data Line: Factors whose eigenvalues from the actual data are above the random data line (or beyond the shaded region) are considered meaningful and should be retained.
+Below the Random Data Line: Factors with eigenvalues below the random data line are considered not meaningful and typically not retained.
+
+The plot will provide a visual guide, and often the function might also give a recommendation on the number of factors to retain based on the parallel analysis results.
+
+```{r}
+# Scree plot
+set.seed(123)
+parallel_analysis_plots <- items.all %>% 
+  fa.parallel(fm="minres", 
+              fa="fa",
+              nfactors=1, 
+              main="Parallel Analysis Scree Plots",
+              cor = "poly",
+              sim = TRUE,
+              correct = 0)
+
+parallel_analysis_plots_default <- items.all %>% 
+  fa.parallel(fm="minres", 
+              fa="fa",
+              nfactors=1, 
+              main="Parallel Analysis Scree Plots",
+              #cor = "poly",
+              sim = TRUE,
+              correct = 0)
+
+plot(parallel_analysis_plots)
+plot(parallel_analysis_plots_default)
+```
+
+
+##### Parallel analysis b)
+
+With principal axis factoring method for factor extraction
+```{r}
+fa.parallel(items.all, fa = "fa", fm = "pa") # 1 factor
+```
+
+#### Other approaches 
+```{r}
+nfactors(items.all) # Various outcomes
+```
+
+### Fit model
+```{r}
+cfa_model <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9"
+```
+
+
+```{r}
+fitCFA.all <- cfa(cfa_model, 
+                  estimator = "WLSMV", 
+                  data = items.all,
+                  ordered = names(items.all)
+)
+```
+
+### Model fit
+
+```{r}
+fitMeasures(fitCFA.all, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust", "SRMR"))
+
+summary(fitCFA.all, 
+        fit = T, 
+        std = T)
+```
+
+### Modifiaction Indices
+
+```{r}
+modification_indices <- modindices(fitCFA.all, sort = TRUE, maximum.number = 5)
+
+modifications <- modification_indices %>% 
+  mutate(mods = paste(lhs, op, rhs)) %>% pull(mods)
+
+# Concatenate into a single string
+modifications_string <- paste(modifications, collapse = "\n")
+
+cat(modifications_string)
+```
+
+```{r}
+cfa_model_modified <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+
+PFM38 ~~ PFM44
+PFM25 ~~ PFM26
+PFM34 ~~ PFM35
+PFM17 ~~ PFM38
+PFM3 ~~ PFM6
+"
+
+# Fit model
+fitCFA.all_modified <- cfa(cfa_model_modified, 
+                           estimator = "WLSMV", 
+                           data = items.all,
+                           ordered = names(items.all)
+)
+```
+
+#### Comparing Model Fit
+```{r}
+fitMeasures(fitCFA.all_modified, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+fitMeasures(fitCFA.all, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+```
+
+
+```{r}
+summary(fitCFA.all_modified, 
+        fit = T, 
+        std = T)
+
+anova(fitCFA.all, 
+      fitCFA.all_modified)
+```
+
+### Reliability
+
+```{r}
+semTools::reliability(fitCFA.all)
+```
+
+<br>
+
+### Multigroup CFA
+
+```{r}
+data_cfa_group <- items_age_gender_country %>% 
+  dplyr::select(country, ceiling_item_names)
+
+fit_multigroup_cfa <- sem(cfa_model, 
+                          data = data_cfa_group, 
+                          ordered = ceiling_item_names,
+                          group = "country")
+
+summary(fit_multigroup_cfa,
+        fit.measures = TRUE, 
+        standardized = TRUE)
+
+# Creating a subset of fit indices we will examine across all models
+fit.subset<-c("chisq.scaled","df","pvalue.scaled",
+              "rmsea.scaled","rmsea.pvalue.scale",
+              "rmsea.ci.lower.scaled","rmsea.ci.upper.scaled",
+              "cfi","tli","srmr","aic","bic")
+
+fitmeasures(fit_multigroup_cfa, fit.subset)
+```
+
+<br>
+
+### Omega Analysis
+```{r}
+omega_results_2_factors_all <- psych::omega(items.all, 2)
+omega_results_3_factors_all <- psych::omega(items.all, 3)
+```
+
+Explained Common Variance of the general factor =  0.81.
+
+<br>
+
+## GRM
+
+https://github.com/ccs-amsterdam/r-course-material/blob/master/tutorials/R_test-theory_3_irt_graded.md#item-information-curves
+
+```{r}
+grm.all <- mirt(items.all, 1, itemtype = "graded")
+
+# Look at parameters
+coef(grm.all, IRTpars = TRUE, simplifty = TRUE)
+
+# Fit statistics
+M2(grm.all)
+```
+
+```{r}
+M2(grm.all, type = 'C2')
+```
+
+### Yen
+```{r}
+# Local dependency
+res <- residuals(grm.all, type="Q3")
+res <- round(res, 2)
+res[res<0.2] <- NA
+res 
+```
+
+### Correlation of sum scores and EAP scores
+
+```{r}
+EAPcor(grm.all, items.all)
+```
+
+### Item Characteristic Curves (ICCs)
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.all, i) %>% print()
+  
+}
+```
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.all, i, type = "info") %>% print()
+  
+}
+```
+
+
+### Test Information Curve
+
+```{r}
+# Plot test information curve
+plot(grm.all, type = 'info', IRTpars = TRUE, xlim = c(-4, 4))
+
+```
+
+# Replicating the Bifactor Model from omega()
+
+## 3 factors
+
+### Get residual loadings
+```{r}
+schmid_loadings <- omega_results_3_factors_all$schmid$sl %>% as.data.frame() %>% dplyr::select("F1*", "F2*", "F3*")
+
+# Determine the factor with the highest loading for each item
+highest_loading <- apply(schmid_loadings, 1, which.max)
+
+# Initialize empty lists to store items for each factor
+factors <- list(f1 = vector(), f2 = vector(), f3 = vector())
+
+# Assign items to factors based on highest loading
+for (i in 1:length(highest_loading)) {
+  factor_name <- paste0("f", highest_loading[i])
+  factors[[factor_name]] <- c(factors[[factor_name]], rownames(loadings)[i])
+}
+
+# Generate CFA model syntax
+cfa_model_syntax <- ""
+for (factor_name in names(factors)) {
+  items <- factors[[factor_name]]
+  if (length(items) > 0) {
+    cfa_model_syntax <- paste(cfa_model_syntax, paste0(factor_name, " =~ ", paste(items, collapse = " + ")), "\n", sep="")
+  }
+}
+
+# Print the CFA model syntax
+cat(cfa_model_syntax)
+```
+
+### bifactor model:
+
+```{r}
+bifactor_model <- "
+# General factor (g) that all items load on
+  g =~ PFM1 + PFM2 + PFM3 + PFM4 + PFM6 + PFM7 + PFM9 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53
+  
+# Specific factor 1
+f1 =~ PFM19 + PFM21 + PFM27 + PFM3 + PFM32 + PFM36 + PFM4 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+
+# Specific factor 2
+f2 =~ PFM16 + PFM18 + PFM23 + PFM25 + PFM26 + PFM28 + PFM29 + PFM34 + PFM35 + PFM37 + PFM40
+
+# Specific factor 3
+f3 =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM17 + PFM2 + PFM33 + PFM38 + PFM43 + PFM44 + PFM46
+"
+```
+
+### Results
+```{r}
+fit_bifactor <- cfa(bifactor_model, 
+                        estimator = "MLR",
+                        items.all)
+
+summary(fit_bifactor, fit.measures = TRUE)
+```
+
+
+## 2 Factors
+
+### Get residual loadings
+```{r}
+schmid_loadings <- omega_results_2_factors_all$schmid$sl %>% as.data.frame() %>% dplyr::select("F1*", "F2*")
+
+# Determine the factor with the highest loading for each item
+highest_loading <- apply(schmid_loadings, 1, which.max)
+
+# Initialize empty lists to store items for each factor
+factors <- list(f1 = vector(), f2 = vector())
+
+# Assign items to factors based on highest loading
+for (i in 1:length(highest_loading)) {
+  factor_name <- paste0("f", highest_loading[i])
+  factors[[factor_name]] <- c(factors[[factor_name]], rownames(loadings)[i])
+}
+
+# Generate CFA model syntax
+cfa_model_syntax <- ""
+for (factor_name in names(factors)) {
+  items <- factors[[factor_name]]
+  if (length(items) > 0) {
+    cfa_model_syntax <- paste(cfa_model_syntax, paste0(factor_name, " =~ ", paste(items, collapse = " + ")), "\n", sep="")
+  }
+}
+
+# Print the CFA model syntax
+cat(cfa_model_syntax)
+```
+
+### bifactor model:
+
+```{r}
+bifactor_model <- "
+# General factor (g) that all items load on
+  g =~ PFM1 + PFM2 + PFM3 + PFM4 + PFM6 + PFM7 + PFM9 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53
+  
+# Specific factor 1
+f1 =~ PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM4 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+# Specific factor 2
+f2 =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM2 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46
+"
+```
+
+### Results
+```{r}
+fit_bifactor <- cfa(bifactor_model, 
+                        estimator = "MLR",
+                        items.all)
+
+summary(fit_bifactor, fit.measures = TRUE)
+```
+
+
+# USA
+
+# Replicating the Bifactor Model from omega()
+
+## 3 factors
+
+### Get residual loadings
+```{r}
+omega_results_3_factors_all <- psych::omega(items.usa, 3)
+schmid_loadings <- omega_results_3_factors_all$schmid$sl %>% as.data.frame() %>% dplyr::select("F1*", "F2*", "F3*")
+
+# Determine the factor with the highest loading for each item
+highest_loading <- apply(schmid_loadings, 1, which.max)
+
+# Initialize empty lists to store items for each factor
+factors <- list(f1 = vector(), f2 = vector(), f3 = vector())
+
+# Assign items to factors based on highest loading
+for (i in 1:length(highest_loading)) {
+  factor_name <- paste0("f", highest_loading[i])
+  factors[[factor_name]] <- c(factors[[factor_name]], rownames(loadings)[i])
+}
+
+# Generate CFA model syntax
+cfa_model_syntax <- ""
+for (factor_name in names(factors)) {
+  items <- factors[[factor_name]]
+  if (length(items) > 0) {
+    cfa_model_syntax <- paste(cfa_model_syntax, paste0(factor_name, " =~ ", paste(items, collapse = " + ")), "\n", sep="")
+  }
+}
+
+# Print the CFA model syntax
+cat(cfa_model_syntax)
+```
+
+### bifactor model:
+
+```{r}
+bifactor_model <- "
+# General factor (g) that all items load on
+  g =~ PFM1 + PFM2 + PFM3 + PFM4 + PFM6 + PFM7 + PFM9 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53
+  
+# Specific factors
+f1 =~ PFM10 + PFM19 + PFM21 + PFM26 + PFM27 + PFM3 + PFM32 + PFM33 + PFM36 + PFM4 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+f2 =~ PFM1 + PFM16 + PFM18 + PFM2 + PFM23 + PFM25 + PFM28 + PFM29 + PFM34 + PFM35 + PFM37 + PFM40
+f3 =~ PFM12 + PFM15 + PFM17 + PFM38 + PFM43 + PFM44 + PFM46
+"
+```
+
+### Results
+```{r}
+fit_bifactor <- cfa(bifactor_model, 
+                        estimator = "MLR",
+                        items.usa)
+
+summary(fit_bifactor, fit.measures = TRUE)
+```
+
+# ger
+
+# Replicating the Bifactor Model from omega()
+
+## 3 factors
+
+### Get residual loadings
+```{r}
+omega_results_3_factors_all <- psych::omega(items.ger, 3)
+schmid_loadings <- omega_results_3_factors_all$schmid$sl %>% as.data.frame() %>% dplyr::select("F1*", "F2*", "F3*")
+
+# Determine the factor with the highest loading for each item
+highest_loading <- apply(schmid_loadings, 1, which.max)
+
+# Initialize empty lists to store items for each factor
+factors <- list(f1 = vector(), f2 = vector(), f3 = vector())
+
+# Assign items to factors based on highest loading
+for (i in 1:length(highest_loading)) {
+  factor_name <- paste0("f", highest_loading[i])
+  factors[[factor_name]] <- c(factors[[factor_name]], rownames(loadings)[i])
+}
+
+# Generate CFA model syntax
+cfa_model_syntax <- ""
+for (factor_name in names(factors)) {
+  items <- factors[[factor_name]]
+  if (length(items) > 0) {
+    cfa_model_syntax <- paste(cfa_model_syntax, paste0(factor_name, " =~ ", paste(items, collapse = " + ")), "\n", sep="")
+  }
+}
+
+# Print the CFA model syntax
+cat(cfa_model_syntax)
+```
+
+### bifactor model:
+
+```{r}
+bifactor_model <- "
+# General factor (g) that all items load on
+  g =~ PFM1 + PFM2 + PFM3 + PFM4 + PFM6 + PFM7 + PFM9 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53
+  
+# Specific factors
+f1 =~ PFM16 + PFM18 + PFM23 + PFM25 + PFM26 + PFM28 + PFM29 + PFM33 + PFM34 + PFM35 + PFM37 + PFM40
+f2 =~ PFM1 + PFM19 + PFM21 + PFM27 + PFM3 + PFM36 + PFM4 + PFM49 + PFM51 + PFM53 + PFM6 + PFM9
+f3 =~ PFM10 + PFM12 + PFM15 + PFM17 + PFM2 + PFM32 + PFM38 + PFM43 + PFM44 + PFM46 + PFM7
+"
+```
+
+### Results
+```{r}
+fit_bifactor <- cfa(bifactor_model, 
+                        estimator = "MLR",
+                        items.ger)
+
+summary(fit_bifactor, fit.measures = TRUE)
+```
+
+# arg
+
+# Replicating the Bifactor Model from omega()
+
+## 3 factors
+
+### Get residual loadings
+```{r}
+omega_results_3_factors_all <- psych::omega(items.arg, 3)
+schmid_loadings <- omega_results_3_factors_all$schmid$sl %>% as.data.frame() %>% dplyr::select("F1*", "F2*", "F3*")
+
+# Determine the factor with the highest loading for each item
+highest_loading <- apply(schmid_loadings, 1, which.max)
+
+# Initialize empty lists to store items for each factor
+factors <- list(f1 = vector(), f2 = vector(), f3 = vector())
+
+# Assign items to factors based on highest loading
+for (i in 1:length(highest_loading)) {
+  factor_name <- paste0("f", highest_loading[i])
+  factors[[factor_name]] <- c(factors[[factor_name]], rownames(loadings)[i])
+}
+
+# Generate CFA model syntax
+cfa_model_syntax <- ""
+for (factor_name in names(factors)) {
+  items <- factors[[factor_name]]
+  if (length(items) > 0) {
+    cfa_model_syntax <- paste(cfa_model_syntax, paste0(factor_name, " =~ ", paste(items, collapse = " + ")), "\n", sep="")
+  }
+}
+
+# Print the CFA model syntax
+cat(cfa_model_syntax)
+```
+
+### bifactor model:
+
+```{r}
+bifactor_model <- "
+# General factor (g) that all items load on
+  g =~ PFM1 + PFM2 + PFM3 + PFM4 + PFM6 + PFM7 + PFM9 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53
+  
+# Specific factors
+f1 =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM2 + PFM32 + PFM38 + PFM43 + PFM44 + PFM46 + PFM7
+f2 =~ PFM18 + PFM19 + PFM23 + PFM25 + PFM28 + PFM29 + PFM3 + PFM34 + PFM35 + PFM37 + PFM40 + PFM9
+f3 =~ PFM21 + PFM26 + PFM27 + PFM33 + PFM36 + PFM4 + PFM49 + PFM51 + PFM53 + PFM6
+"
+```
+
+### Results
+```{r}
+fit_bifactor <- cfa(bifactor_model, 
+                        estimator = "MLR",
+                        items.arg)
+
+summary(fit_bifactor, fit.measures = TRUE)
+```
+
+## DIF
+
+```{r}
+# Omit NAs
+DIF.data <- items_age_gender_country |> 
+  dplyr::select(ceiling_item_names, country) %>% 
+  na.omit() %>% as.data.frame()
+
+# Specify items
+DIF.items <- DIF.data %>% dplyr::select(ceiling_item_names)
+
+# Set factor levels
+DIF.country <- DIF.data$country |> 
+  factor(levels = c("usa", "ger", "arg"))
+
+# Look for DIF by gender - item 8 flagged
+country_dif <- lordif(DIF.items, 
+                      DIF.country, 
+                      criterion = "R2", 
+                      pseudo.R2 = "Nagelkerke")
+
+summary(country_dif)
+```
+
+# Psychometric Investigation: USA
+
+## Factorial Structure
+
+### Inspect variables
+```{r}
+items.usa %>%
+  psych::describe()
+
+items.usa %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.usa %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.ger %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+```
+
+### Inspecting Factorial Structure
+
+#### Multivariate normal distribution check
+
+##### Analysis Explanation:
+
+- The mvn function from the MVN package in R is used to assess multivariate normality of the given data. Multivariate normality is an important assumption in many statistical techniques. Specifically, in the context of Item Response Theory (IRT) for polytomous data, checking the assumption of multivariate normality can be crucial, especially if parametric modeling techniques are employed. The function tests multivariate normality using Mardia's test (as specified by the mvnTest argument). Alongside, it provides visual checks through univariate histograms for each variable and a multivariate Q-Q plot.
+
+##### Interpretation of the Output:
+
+- Mardia's Test: This test provides two statistics - skewness and kurtosis. If the p-value associated with these statistics is below a significance threshold (commonly 0.05), it indicates significant deviation from multivariate normality.
+
+- Univariate Histograms: For each item in your dataset, a histogram will be plotted. Under the assumption of normality, the distribution of item scores should roughly resemble a bell curve or a normal distribution. Deviations from this shape can indicate non-normality.
+
+- Multivariate Q-Q Plot: This is a graphical method to check multivariate normality. If the data is multivariate normal, the points should fall roughly along a straight line. Deviations from the straight line can be indicative of violations of the multivariate normality assumption.
+
+
+```{r}
+#mvn_result <- MVN::mvn(items.usa,
+#                       mvnTest = "mardia",
+#                       univariatePlot = "histogram",
+#                       multivariatePlot = "qq")
+#
+##### Multivariate Normality Result
+#mvn_result$multivariateNormality
+#
+#### Univariate Normality Result
+#mvn_result$univariateNormality
+#
+#### Descriptives
+#mvn_result$Descriptives
+#
+#### Multivariate Outliers
+#mvn_result$multivariateOutliers
+#
+#items.usa %>%
+#  mardia(plot = TRUE) # We should use MLR instead of ML
+```
+
+### Bartlett's test
+
+#### Analysis Explanation:
+
+- Bartlett's test of sphericity checks if there is a certain structure in the dataset or if the variables in the dataset are uncorrelated. This test is used to validate the factorability of a dataset before factor analysis. Specifically, the test evaluates the hypothesis that your correlation matrix is an identity matrix, which would suggest that the variables are unrelated. In the context of Item Response Theory (IRT), or any other situation involving multiple variables (items), ensuring that there's some correlation structure is important before proceeding with multivariate analysis techniques like factor analysis.
+
+#### Interpretation of the Output:
+
+- Chi-Square Value: This is the test statistic for Bartlett's test of sphericity.
+
+- Degrees of Freedom (df): This represents the number of degrees of freedom for the test.
+- p-value: This is the significance value associated with the test statistic.
+
+If the p-value is less than a chosen significance level (typically 0.05), you would reject the null hypothesis. Rejecting the null hypothesis suggests that there is a significant structure to your data, and it's appropriate to proceed with factor analysis or similar multivariate techniques.
+
+If the p-value is greater than the significance level, it suggests that the correlation matrix might be close to the identity matrix, indicating that the variables might be unrelated. In such a case, factor analysis might not be appropriate or meaningful.
+
+```{r}
+cortest.bartlett(items.usa)
+```
+
+
+### Kaiser-Meyer-Olkin index
+
+#### Analysis Explanation:
+The Kaiser-Meyer-Olkin (KMO) statistic is a measure of the proportion of variance among variables that might be common variance. The KMO measure is often used in factor analysis to determine whether the data is suitable for factor analysis. The value of the KMO statistic varies between 0 and 1. Higher values (close to 1) suggest that factor analysis is appropriate, while values closer to 0 suggest that factor analysis may not be suitable.
+
+#### Interpretation of the Output:
+In his delightfully flamboyant style, Kaiser (1975) suggested that KMO > .9 were marvelous, in the .80s, mertitourious, in the .70s, middling, in the .60s, medicore, in the 50s, miserable, and less than .5, unacceptable.
+
+```{r}
+KMO(items.usa)
+```
+
+### Scree Plot
+
+#### Using PCA
+
+##### Analysis Explanation:
+
+The scree plot is a graphical representation of the eigenvalues associated with each factor (or principal component) in descending order. It's named "scree" because the graph typically displays a clear break or "elbow", resembling the scatter of rocks or "scree" at the base of a cliff. This break or "elbow" helps in deciding how many factors to retain. The idea is to retain factors whose eigenvalues are above this break, as they capture more variance than can be expected by chance.
+
+##### Interpretation of the Output:
+The scree plot will display the eigenvalues on the y-axis and the factors (or principal components) on the x-axis. Here's how you interpret the plot:
+Before the Elbow: Factors or components to the left of the elbow represent significant amounts of variance in the data and are typically considered for retention.
+At and After the Elbow: Factors or components at and to the right of the elbow represent smaller and less significant amounts of variance. They are often not retained as they don't add much valuable information and might be a result of noise in the data.
+
+For your analysis with pc = 1, you're looking at a principal component scree plot. This can help in determining the number of principal components to retain.
+
+```{r}
+# Simple scree plot
+scree(items.usa, pc = 1) # Factors based on Kaiser Kriterium (Eigenvalues < 1)
+```
+
+#### From Parallel Analysis
+
+##### Analysis Explanation:
+
+Parallel analysis is a technique used to decide on the number of factors to retain in factor analysis. Instead of relying solely on eigenvalues from the actual data (as in the scree plot method), parallel analysis compares these eigenvalues with those from random data. The logic is that factors from the actual data should have eigenvalues greater than those that would be obtained from random data to be considered meaningful.
+
+Here are the specifics of your analysis:
+
+fm="minres": You're using the minimum residual method for factor extraction.
+fa="fa": You're conducting a factor analysis (as opposed to principal component analysis).
+cor="poly": You're using polychoric correlations, which are appropriate for ordinal data or polytomous items (like Likert scale responses).
+correct=0: No corrections are applied to the eigenvalues of the random data.
+
+##### Interpretation of the Output:
+
+The output will likely include a plot that shows eigenvalues from your actual data compared with eigenvalues from random data:
+
+Actual Data Eigenvalues: Represented by a line or bars on the plot.
+Random Data Eigenvalues: Often shown by a parallel line or a shaded region.
+
+To interpret:
+
+Above the Random Data Line: Factors whose eigenvalues from the actual data are above the random data line (or beyond the shaded region) are considered meaningful and should be retained.
+Below the Random Data Line: Factors with eigenvalues below the random data line are considered not meaningful and typically not retained.
+
+The plot will provide a visual guide, and often the function might also give a recommendation on the number of factors to retain based on the parallel analysis results.
+
+```{r}
+# Scree plot
+set.seed(123)
+no.factors <- items.usa |>
+  fa.parallel(fm="minres", 
+              fa="fa", 
+              cor = "poly",
+              correct = 0) 
+scree.plot(no.factors)
+```
+
+##### Parallel analysis b)
+
+With principal axis factoring method for factor extraction
+```{r}
+fa.parallel(items.usa, fa = "fa", fm = "pa") # 1 factor
+```
+
+#### Other approaches 
+```{r}
+nfactors(items.usa) # Various outcomes
+```
+
+### Mokken
+
+#### H coefficient
+
+Loevinger’s H values 
+
+##### Analysis Explanation:
+The H coefficient, or sometimes called H index or coefficient H, is an alternative to the commonly used Cronbach's alpha for measuring internal consistency. It was proposed by José Luis Hernández, Ricardo Ferrando, and Urbano Lorenzo-Seva. The H coefficient has certain advantages over Cronbach's alpha, especially when the items in a scale are not tau-equivalent (they don't share the same factor loadings). In such situations, the H coefficient may provide a more accurate estimation of reliability.
+
+##### Interpretation of the Output:
+When you get the result from coefH(), you'll obtain a value for the H coefficient. This value ranges between 0 and 1, with the following general interpretation:
+
+H close to 1: Indicates high internal consistency or reliability. The items in the dataset seem to measure the same underlying construct or dimension.
+
+H close to 0: Indicates low internal consistency. This suggests that the items might not be consistently measuring the same construct.
+
+Here's a rough guideline for interpretation:
+
+H ≥ 0.90: Excellent reliability
+0.80 ≤ H < 0.90: Good reliability
+0.70 ≤ H < 0.80: Acceptable reliability
+0.60 ≤ H < 0.70: Questionable reliability
+0.50 ≤ H < 0.60: Poor reliability
+H < 0.50: Unacceptable reliability
+
+```{r}
+items.usa|>
+  as.data.frame() |>
+  coefH()
+```
+
+
+
+#### Analysis Explanation:
+Mokken Scale Analysis identifies items that form a unidimensional, hierarchical scale. This means that if a respondent correctly answers (or agrees with) a more difficult item, they will also correctly answer (or agree with) less difficult items. AISP automates the process of selecting items that fit the MSA model.
+
+There are two main assumptions in MSA:
+
+Unidimensionality: All items in the scale measure the same construct.
+Monotonicity: An increase in the underlying trait level leads to an increase in the probability of endorsing an item.
+
+AISP helps in identifying items that fit these assumptions, and in creating scales based on the Mokken model.
+
+#### Interpretation of the Output:
+The output of the aisp() function typically provides the following:
+
+Item Scalability Coefficients (Hij): These are pairwise coefficients for all items, which indicate how well pairs of items jointly fit the MSA model.
+
+Overall Scalability Coefficient (Hi): This indicates how well an individual item fits the MSA model when combined with all other items.
+
+Scale Scalability Coefficient (H): This coefficient represents the scalability of the entire scale, and it's analogous to Cronbach's alpha in classical test theory. Higher values (closer to 1) indicate a better fit to the Mokken model.
+
+General guidelines for interpreting the scalability coefficients are:
+
+H > 0.5: Strong scalability
+0.4 < H ≤ 0.5: Moderate scalability
+0.3 < H ≤ 0.4: Weak scalability
+H ≤ 0.3: The scale is not considered scalable.
+
+Additionally, the output may provide information on the selected items for the Mokken scale and any items that were rejected.
+
+```{r}
+items.usa |>
+  as.data.frame() |>
+  aisp()
+```
+
+### Network visualisation
+
+```{r}
+network(items.usa)
+```
+
+## CFA
+
+### Fit model
+```{r}
+cfa_model <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9"
+```
+
+
+```{r}
+fitCFA.usa <- cfa(cfa_model, 
+                  estimator = "WLSMV", 
+                  data = items.usa,
+                  ordered = names(items.usa)
+)
+```
+
+### Model fit
+
+```{r}
+fitMeasures(fitCFA.usa, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+
+summary(fitCFA.usa, 
+        fit = T, 
+        std = T)
+```
+
+### Modifiaction Indices
+
+```{r}
+modification_indices <- modindices(fitCFA.usa, sort = TRUE, maximum.number = 5)
+
+modifications <- modification_indices %>% 
+  mutate(mods = paste(lhs, op, rhs)) %>% pull(mods)
+
+# Concatenate into a single string
+modifications_string <- paste(modifications, collapse = "\n")
+
+cat(modifications_string)
+```
+
+```{r}
+cfa_model_modified <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+
+PFM38 ~~ PFM44
+PFM19 ~~ PFM7
+PFM16 ~~ PFM37
+PFM34 ~~ PFM35
+PFM3 ~~ PFM6
+"
+
+# Fit model
+fitCFA.usa_modified <- cfa(cfa_model_modified, 
+                           estimator = "MLR", 
+                           data = items.usa)
+```
+
+#### Comparing Model Fit
+```{r}
+fitMeasures(fitCFA.usa_modified, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+fitMeasures(fitCFA.usa, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+```
+
+
+```{r}
+summary(fitCFA.usa_modified, 
+        fit = T, 
+        std = T)
+
+#anova(fitCFA.usa, 
+#      fitCFA.usa_modified)
+```
+
+### Reliability
+
+```{r}
+semTools::reliability(fitCFA.usa)
+```
+
+<br>
+
+### Omega Analysis
+```{r}
+psych::omega(items.usa)
+```
+
+<br>
+
+## GRM
+
+https://github.com/ccs-amsterdam/r-course-material/blob/master/tutorials/R_test-theory_3_irt_graded.md#item-information-curves
+
+```{r}
+grm.usa <- mirt(items.usa, 1, itemtype = "graded")
+
+# Look at parameters
+coef(grm.usa, IRTpars = TRUE, simplifty = TRUE)
+
+# Fit statistics
+M2(grm.usa)
+
+# Local dependency
+res <- residuals(grm.usa, type="Q3")
+res[res<0.2] <- NA
+res
+```
+
+### Correlation of sum scores and EAP scores
+
+```{r}
+EAPcor(grm.usa, items.usa)
+```
+
+### Item Characteristic Curves (ICCs)
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.usa, i) %>% print()
+  
+}
+```
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.usa, i, type = "info") %>% print()
+  
+}
+```
+
+
+### Test Information Curve
+
+```{r}
+# Plot test information curve
+plot(grm.usa, type = 'info', IRTpars = TRUE, xlim = c(-4, 4))
+
+```
+
+
+# Psychometric Investigation: Germany
+
+## Factorial Structure
+
+### Inspect variables
+```{r}
+items.ger %>%
+  psych::describe()
+
+items.ger %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.ger %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.ger %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+```
+
+### Inspecting Factorial Structure
+
+#### Multivariate normal distribution check
+
+##### Analysis Explanation:
+
+- The mvn function from the MVN package in R is used to assess multivariate normality of the given data. Multivariate normality is an important assumption in many statistical techniques. Specifically, in the context of Item Response Theory (IRT) for polytomous data, checking the assumption of multivariate normality can be crucial, especially if parametric modeling techniques are employed. The function tests multivariate normality using Mardia's test (as specified by the mvnTest argument). Alongside, it provides visual checks through univariate histograms for each variable and a multivariate Q-Q plot.
+
+##### Interpretation of the Output:
+
+- Mardia's Test: This test provides two statistics - skewness and kurtosis. If the p-value associated with these statistics is below a significance threshold (commonly 0.05), it indicates significant deviation from multivariate normality.
+
+- Univariate Histograms: For each item in your dataset, a histogram will be plotted. Under the assumption of normality, the distribution of item scores should roughly resemble a bell curve or a normal distribution. Deviations from this shape can indicate non-normality.
+
+- Multivariate Q-Q Plot: This is a graphical method to check multivariate normality. If the data is multivariate normal, the points should fall roughly along a straight line. Deviations from the straight line can be indicative of violations of the multivariate normality assumption.
+
+
+```{r}
+#mvn_result <- MVN::mvn(items.ger,
+#                       mvnTest = "mardia",
+#                       univariatePlot = "histogram",
+#                       multivariatePlot = "qq")
+#
+##### Multivariate Normality Result
+#mvn_result$multivariateNormality
+#
+#### Univariate Normality Result
+#mvn_result$univariateNormality
+#
+#### Descriptives
+#mvn_result$Descriptives
+#
+#### Multivariate Outliers
+#mvn_result$multivariateOutliers
+
+#items.ger %>%
+#  mardia(plot = TRUE) # We should use MLR instead of ML
+```
+
+### Bartlett's test
+
+#### Analysis Explanation:
+
+- Bartlett's test of sphericity checks if there is a certain structure in the dataset or if the variables in the dataset are uncorrelated. This test is used to validate the factorability of a dataset before factor analysis. Specifically, the test evaluates the hypothesis that your correlation matrix is an identity matrix, which would suggest that the variables are unrelated. In the context of Item Response Theory (IRT), or any other situation involving multiple variables (items), ensuring that there's some correlation structure is important before proceeding with multivariate analysis techniques like factor analysis.
+
+#### Interpretation of the Output:
+
+- Chi-Square Value: This is the test statistic for Bartlett's test of sphericity.
+
+- Degrees of Freedom (df): This represents the number of degrees of freedom for the test.
+- p-value: This is the significance value associated with the test statistic.
+
+If the p-value is less than a chosen significance level (typically 0.05), you would reject the null hypothesis. Rejecting the null hypothesis suggests that there is a significant structure to your data, and it's appropriate to proceed with factor analysis or similar multivariate techniques.
+
+If the p-value is greater than the significance level, it suggests that the correlation matrix might be close to the identity matrix, indicating that the variables might be unrelated. In such a case, factor analysis might not be appropriate or meaningful.
+
+```{r}
+cortest.bartlett(items.ger)
+```
+
+
+### Kaiser-Meyer-Olkin index
+
+#### Analysis Explanation:
+The Kaiser-Meyer-Olkin (KMO) statistic is a measure of the proportion of variance among variables that might be common variance. The KMO measure is often used in factor analysis to determine whether the data is suitable for factor analysis. The value of the KMO statistic varies between 0 and 1. Higher values (close to 1) suggest that factor analysis is appropriate, while values closer to 0 suggest that factor analysis may not be suitable.
+
+#### Interpretation of the Output:
+In his delightfully flamboyant style, Kaiser (1975) suggested that KMO > .9 were marvelous, in the .80s, mertitourious, in the .70s, middling, in the .60s, medicore, in the 50s, miserable, and less than .5, unacceptable.
+
+```{r}
+KMO(items.ger)
+```
+
+### Scree Plot
+
+#### Using PCA
+
+##### Analysis Explanation:
+
+The scree plot is a graphical representation of the eigenvalues associated with each factor (or principal component) in descending order. It's named "scree" because the graph typically displays a clear break or "elbow", resembling the scatter of rocks or "scree" at the base of a cliff. This break or "elbow" helps in deciding how many factors to retain. The idea is to retain factors whose eigenvalues are above this break, as they capture more variance than can be expected by chance.
+
+##### Interpretation of the Output:
+The scree plot will display the eigenvalues on the y-axis and the factors (or principal components) on the x-axis. Here's how you interpret the plot:
+Before the Elbow: Factors or components to the left of the elbow represent significant amounts of variance in the data and are typically considered for retention.
+At and After the Elbow: Factors or components at and to the right of the elbow represent smaller and less significant amounts of variance. They are often not retained as they don't add much valuable information and might be a result of noise in the data.
+
+For your analysis with pc = 1, you're looking at a principal component scree plot. This can help in determining the number of principal components to retain.
+
+```{r}
+# Simple scree plot
+scree(items.ger, pc = 1) # Factors based on Kaiser Kriterium (Eigenvalues < 1)
+```
+
+#### From Parallel Analysis
+
+##### Analysis Explanation:
+
+Parallel analysis is a technique used to decide on the number of factors to retain in factor analysis. Instead of relying solely on eigenvalues from the actual data (as in the scree plot method), parallel analysis compares these eigenvalues with those from random data. The logic is that factors from the actual data should have eigenvalues greater than those that would be obtained from random data to be considered meaningful.
+
+Here are the specifics of your analysis:
+
+fm="minres": You're using the minimum residual method for factor extraction.
+fa="fa": You're conducting a factor analysis (as opposed to principal component analysis).
+cor="poly": You're using polychoric correlations, which are appropriate for ordinal data or polytomous items (like Likert scale responses).
+correct=0: No corrections are applied to the eigenvalues of the random data.
+
+##### Interpretation of the Output:
+
+The output will likely include a plot that shows eigenvalues from your actual data compared with eigenvalues from random data:
+
+Actual Data Eigenvalues: Represented by a line or bars on the plot.
+Random Data Eigenvalues: Often shown by a parallel line or a shaded region.
+
+To interpret:
+
+Above the Random Data Line: Factors whose eigenvalues from the actual data are above the random data line (or beyond the shaded region) are considered meaningful and should be retained.
+Below the Random Data Line: Factors with eigenvalues below the random data line are considered not meaningful and typically not retained.
+
+The plot will provide a visual guide, and often the function might also give a recommendation on the number of factors to retain based on the parallel analysis results.
+
+```{r}
+# Scree plot
+set.seed(123)
+no.factors <- items.ger |>
+  fa.parallel(fm="minres", 
+              fa="fa", 
+              cor = "poly",
+              correct = 0) 
+scree.plot(no.factors)
+```
+
+##### Parallel analysis b)
+
+With principal axis factoring method for factor extraction
+```{r}
+fa.parallel(items.ger, fa = "fa", fm = "pa") # 1 factor
+```
+
+#### Other approaches 
+```{r}
+nfactors(items.ger) # Various outcomes
+```
+
+### H coefficient
+
+#### Analysis Explanation:
+The H coefficient, or sometimes called H index or coefficient H, is an alternative to the commonly used Cronbach's alpha for measuring internal consistency. It was proposed by José Luis Hernández, Ricardo Ferrando, and Urbano Lorenzo-Seva. The H coefficient has certain advantages over Cronbach's alpha, especially when the items in a scale are not tau-equivalent (they don't share the same factor loadings). In such situations, the H coefficient may provide a more accurate estimation of reliability.
+
+#### Interpretation of the Output:
+When you get the result from coefH(), you'll obtain a value for the H coefficient. This value ranges between 0 and 1, with the following general interpretation:
+
+H close to 1: Indicates high internal consistency or reliability. The items in the dataset seem to measure the same underlying construct or dimension.
+
+H close to 0: Indicates low internal consistency. This suggests that the items might not be consistently measuring the same construct.
+
+Here's a rough guideline for interpretation:
+
+H ≥ 0.90: Excellent reliability
+0.80 ≤ H < 0.90: Good reliability
+0.70 ≤ H < 0.80: Acceptable reliability
+0.60 ≤ H < 0.70: Questionable reliability
+0.50 ≤ H < 0.60: Poor reliability
+H < 0.50: Unacceptable reliability
+
+```{r}
+items.ger|>
+  as.data.frame() |>
+  coefH()
+```
+
+### Mokken
+
+#### Analysis Explanation:
+Mokken Scale Analysis identifies items that form a unidimensional, hierarchical scale. This means that if a respondent correctly answers (or agrees with) a more difficult item, they will also correctly answer (or agree with) less difficult items. AISP automates the process of selecting items that fit the MSA model.
+
+There are two main assumptions in MSA:
+
+Unidimensionality: All items in the scale measure the same construct.
+Monotonicity: An increase in the underlying trait level leads to an increase in the probability of endorsing an item.
+
+AISP helps in identifying items that fit these assumptions, and in creating scales based on the Mokken model.
+
+#### Interpretation of the Output:
+The output of the aisp() function typically provides the following:
+
+Item Scalability Coefficients (Hij): These are pairwise coefficients for all items, which indicate how well pairs of items jointly fit the MSA model.
+
+Overall Scalability Coefficient (Hi): This indicates how well an individual item fits the MSA model when combined with all other items.
+
+Scale Scalability Coefficient (H): This coefficient represents the scalability of the entire scale, and it's analogous to Cronbach's alpha in classical test theory. Higher values (closer to 1) indicate a better fit to the Mokken model.
+
+General guidelines for interpreting the scalability coefficients are:
+
+H > 0.5: Strong scalability
+0.4 < H ≤ 0.5: Moderate scalability
+0.3 < H ≤ 0.4: Weak scalability
+H ≤ 0.3: The scale is not considered scalable.
+
+Additionally, the output may provide information on the selected items for the Mokken scale and any items that were rejected.
+
+```{r}
+items.ger |>
+  as.data.frame() |>
+  aisp()
+```
+
+### Network visualisation
+
+```{r}
+network(items.ger)
+```
+
+## CFA
+
+### Fit model
+```{r}
+cfa_model <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9"
+```
+
+```{r}
+fitCFA.ger <- cfa(cfa_model, 
+                  estimator = "WLSMV", 
+                  data = items.ger,
+                  ordered = names(items.ger)
+)
+
+# 95% CIs for RMSEA
+#ci.rmsea(rmsea=.075, df=54, N=317642, conf.level=.95)
+```
+
+### Model fit
+
+```{r}
+summary(fitCFA.ger, fit.measures = TRUE, standardized = TRUE)
+
+fitMeasures(fitCFA.ger, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+```
+
+### Modifiaction Indices
+
+```{r}
+modification_indices <- modindices(fitCFA.ger, sort = TRUE, maximum.number = 5)
+
+modifications <- modification_indices %>% 
+  mutate(mods = paste(lhs, op, rhs)) %>% pull(mods)
+
+# Concatenate into a single string
+modifications_string <- paste(modifications, collapse = "\n")
+
+cat(modifications_string)
+```
+
+```{r}
+cfa_model_modified <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+
+PFM25 ~~ PFM26
+PFM38 ~~ PFM44
+PFM10 ~~ PFM7
+PFM3 ~~ PFM6
+PFM34 ~~ PFM35
+"
+
+# Fit model
+fitCFA.ger_modified <- cfa(cfa_model_modified, 
+                           estimator = "WLSMV", 
+                           data = items.ger,
+                           ordered = names(items.ger)
+)
+```
+
+#### Comparing Model Fit
+```{r}
+fitMeasures(fitCFA.ger_modified, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+fitMeasures(fitCFA.ger, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+
+anova(fitCFA.ger, 
+      fitCFA.ger_modified)
+```
+
+### Reliability
+
+```{r}
+semTools::reliability(fitCFA.ger)
+```
+
+### Omega Analysis
+```{r}
+psych::omega(items.ger)
+```
+
+Explained Common Variance of the general factor =  0.78 
+
+<br>
+
+## GRM
+
+https://github.com/ccs-amsterdam/r-course-material/blob/master/tutorials/R_test-theory_3_irt_graded.md#item-information-curves
+
+```{r}
+grm.ger <- mirt(items.ger, 1, itemtype = "graded")
+
+# Look at parameters
+coef(grm.ger, IRTpars = TRUE, simplifty = TRUE)
+
+# Fit statistics
+M2(grm.ger)
+
+# Local dependency
+res <- residuals(grm.ger, type="Q3")
+res[res<0.2] <- NA
+res
+```
+
+### Correlation of sum scores and EAP scores
+
+```{r}
+EAPcor(grm.ger, items.ger)
+```
+
+### Item Characteristic Curves (ICCs)
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.ger, i) %>% print()
+  
+}
+```
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.ger, i, type = "info") %>% print()
+  
+}
+```
+
+
+### Test Information Curve
+
+```{r}
+# Plot test information curve
+plot(grm.ger, type = 'info', IRTpars = TRUE, xlim = c(-4, 4))
+
+```
+
+
+# Psychometric Investigation: Argentina
+
+## Factorial Structure
+
+### Inspect variables
+```{r}
+items.arg %>%
+  psych::describe()
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+
+items.arg %>%
+  pivot_longer(PFM1:PFM9, names_to = "key", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 5, 
+                 fill = "lightblue",
+                 color = "white") +
+  facet_wrap(~key) +
+  theme_minimal() +
+  labs(x = "Values (5=Without any difficulty 4=With a little difficulty 3=With some difficulty 2=With much difficulty 1=Unable to do)",
+       y = "Number of responses")
+```
+
+### Inspecting Factorial Structure
+
+#### Multivariate normal distribution check
+
+##### Analysis Explanation:
+
+- The mvn function from the MVN package in R is used to assess multivariate normality of the given data. Multivariate normality is an important assumption in many statistical techniques. Specifically, in the context of Item Response Theory (IRT) for polytomous data, checking the assumption of multivariate normality can be crucial, especially if parametric modeling techniques are employed. The function tests multivariate normality using Mardia's test (as specified by the mvnTest argument). Alongside, it provides visual checks through univariate histograms for each variable and a multivariate Q-Q plot.
+
+##### Interpretation of the Output:
+
+- Mardia's Test: This test provides two statistics - skewness and kurtosis. If the p-value associated with these statistics is below a significance threshold (commonly 0.05), it indicates significant deviation from multivariate normality.
+
+- Univariate Histograms: For each item in your dataset, a histogram will be plotted. Under the assumption of normality, the distribution of item scores should roughly resemble a bell curve or a normal distribution. Deviations from this shape can indicate non-normality.
+
+- Multivariate Q-Q Plot: This is a graphical method to check multivariate normality. If the data is multivariate normal, the points should fall roughly along a straight line. Deviations from the straight line can be indicative of violations of the multivariate normality assumption.
+
+
+```{r}
+#mvn_result <- MVN::mvn(items.arg,
+#                       mvnTest = "mardia",
+#                       univariatePlot = "histogram",
+#                       multivariatePlot = "qq")
+#
+##### Multivariate Normality Result
+#mvn_result$multivariateNormality
+#
+#### Univariate Normality Result
+#mvn_result$univariateNormality
+#
+#### Descriptives
+#mvn_result$Descriptives
+#
+#### Multivariate Outliers
+#mvn_result$multivariateOutliers
+#
+#items.arg %>%
+#  mardia(plot = TRUE) # We should use MLR instead of ML
+```
+
+### Bartlett's test
+
+#### Analysis Explanation:
+
+- Bartlett's test of sphericity checks if there is a certain structure in the dataset or if the variables in the dataset are uncorrelated. This test is used to validate the factorability of a dataset before factor analysis. Specifically, the test evaluates the hypothesis that your correlation matrix is an identity matrix, which would suggest that the variables are unrelated. In the context of Item Response Theory (IRT), or any other situation involving multiple variables (items), ensuring that there's some correlation structure is important before proceeding with multivariate analysis techniques like factor analysis.
+
+#### Interpretation of the Output:
+
+- Chi-Square Value: This is the test statistic for Bartlett's test of sphericity.
+
+- Degrees of Freedom (df): This represents the number of degrees of freedom for the test.
+- p-value: This is the significance value associated with the test statistic.
+
+If the p-value is less than a chosen significance level (typically 0.05), you would reject the null hypothesis. Rejecting the null hypothesis suggests that there is a significant structure to your data, and it's appropriate to proceed with factor analysis or similar multivariate techniques.
+
+If the p-value is greater than the significance level, it suggests that the correlation matrix might be close to the identity matrix, indicating that the variables might be unrelated. In such a case, factor analysis might not be appropriate or meaningful.
+
+```{r}
+cortest.bartlett(items.arg)
+```
+
+
+### Kaiser-Meyer-Olkin index
+
+#### Analysis Explanation:
+The Kaiser-Meyer-Olkin (KMO) statistic is a measure of the proportion of variance among variables that might be common variance. The KMO measure is often used in factor analysis to determine whether the data is suitable for factor analysis. The value of the KMO statistic varies between 0 and 1. Higher values (close to 1) suggest that factor analysis is appropriate, while values closer to 0 suggest that factor analysis may not be suitable.
+
+#### Interpretation of the Output:
+In his delightfully flamboyant style, Kaiser (1975) suggested that KMO > .9 were marvelous, in the .80s, mertitourious, in the .70s, middling, in the .60s, medicore, in the 50s, miserable, and less than .5, unacceptable.
+
+```{r}
+KMO(items.arg)
+```
+
+### Scree Plot
+
+#### Using PCA
+
+##### Analysis Explanation:
+
+The scree plot is a graphical representation of the eigenvalues associated with each factor (or principal component) in descending order. It's named "scree" because the graph typically displays a clear break or "elbow", resembling the scatter of rocks or "scree" at the base of a cliff. This break or "elbow" helps in deciding how many factors to retain. The idea is to retain factors whose eigenvalues are above this break, as they capture more variance than can be expected by chance.
+
+##### Interpretation of the Output:
+The scree plot will display the eigenvalues on the y-axis and the factors (or principal components) on the x-axis. Here's how you interpret the plot:
+Before the Elbow: Factors or components to the left of the elbow represent significant amounts of variance in the data and are typically considered for retention.
+At and After the Elbow: Factors or components at and to the right of the elbow represent smaller and less significant amounts of variance. They are often not retained as they don't add much valuable information and might be a result of noise in the data.
+
+For your analysis with pc = 1, you're looking at a principal component scree plot. This can help in determining the number of principal components to retain.
+
+```{r}
+# Simple scree plot
+scree(items.arg, pc = 1) # Factors based on Kaiser Kriterium (Eigenvalues < 1)
+```
+
+#### From Parallel Analysis
+
+##### Analysis Explanation:
+
+Parallel analysis is a technique used to decide on the number of factors to retain in factor analysis. Instead of relying solely on eigenvalues from the actual data (as in the scree plot method), parallel analysis compares these eigenvalues with those from random data. The logic is that factors from the actual data should have eigenvalues greater than those that would be obtained from random data to be considered meaningful.
+
+Here are the specifics of your analysis:
+
+fm="minres": You're using the minimum residual method for factor extraction.
+fa="fa": You're conducting a factor analysis (as opposed to principal component analysis).
+cor="poly": You're using polychoric correlations, which are appropriate for ordinal data or polytomous items (like Likert scale responses).
+correct=0: No corrections are applied to the eigenvalues of the random data.
+
+##### Interpretation of the Output:
+
+The output will likely include a plot that shows eigenvalues from your actual data compared with eigenvalues from random data:
+
+Actual Data Eigenvalues: Represented by a line or bars on the plot.
+Random Data Eigenvalues: Often shown by a parallel line or a shaded region.
+
+To interpret:
+
+Above the Random Data Line: Factors whose eigenvalues from the actual data are above the random data line (or beyond the shaded region) are considered meaningful and should be retained.
+Below the Random Data Line: Factors with eigenvalues below the random data line are considered not meaningful and typically not retained.
+
+The plot will provide a visual guide, and often the function might also give a recommendation on the number of factors to retain based on the parallel analysis results.
+
+```{r}
+# Scree plot
+set.seed(123)
+no.factors <- items.arg |>
+  fa.parallel(fm="minres", 
+              fa="fa", 
+              cor = "poly",
+              correct = 0) 
+scree.plot(no.factors)
+```
+
+##### Parallel analysis b)
+
+With principal axis factoring method for factor extraction
+```{r}
+fa.parallel(items.arg, fa = "fa", fm = "pa") # 1 factor
+```
+
+#### Other approaches 
+```{r}
+nfactors(items.arg) # Various outcomes
+```
+
+### H coefficient
+
+#### Analysis Explanation:
+The H coefficient, or sometimes called H index or coefficient H, is an alternative to the commonly used Cronbach's alpha for measuring internal consistency. It was proposed by José Luis Hernández, Ricardo Ferrando, and Urbano Lorenzo-Seva. The H coefficient has certain advantages over Cronbach's alpha, especially when the items in a scale are not tau-equivalent (they don't share the same factor loadings). In such situations, the H coefficient may provide a more accurate estimation of reliability.
+
+#### Interpretation of the Output:
+When you get the result from coefH(), you'll obtain a value for the H coefficient. This value ranges between 0 and 1, with the following general interpretation:
+
+H close to 1: Indicates high internal consistency or reliability. The items in the dataset seem to measure the same underlying construct or dimension.
+
+H close to 0: Indicates low internal consistency. This suggests that the items might not be consistently measuring the same construct.
+
+Here's a rough guideline for interpretation:
+
+H ≥ 0.90: Excellent reliability
+0.80 ≤ H < 0.90: Good reliability
+0.70 ≤ H < 0.80: Acceptable reliability
+0.60 ≤ H < 0.70: Questionable reliability
+0.50 ≤ H < 0.60: Poor reliability
+H < 0.50: Unacceptable reliability
+
+```{r}
+items.arg|>
+  as.data.frame() |>
+  coefH()
+```
+
+### Mokken
+
+#### Analysis Explanation:
+Mokken Scale Analysis identifies items that form a unidimensional, hierarchical scale. This means that if a respondent correctly answers (or agrees with) a more difficult item, they will also correctly answer (or agree with) less difficult items. AISP automates the process of selecting items that fit the MSA model.
+
+There are two main assumptions in MSA:
+
+Unidimensionality: All items in the scale measure the same construct.
+Monotonicity: An increase in the underlying trait level leads to an increase in the probability of endorsing an item.
+
+AISP helps in identifying items that fit these assumptions, and in creating scales based on the Mokken model.
+
+#### Interpretation of the Output:
+The output of the aisp() function typically provides the following:
+
+Item Scalability Coefficients (Hij): These are pairwise coefficients for all items, which indicate how well pairs of items jointly fit the MSA model.
+
+Overall Scalability Coefficient (Hi): This indicates how well an individual item fits the MSA model when combined with all other items.
+
+Scale Scalability Coefficient (H): This coefficient represents the scalability of the entire scale, and it's analogous to Cronbach's alpha in classical test theory. Higher values (closer to 1) indicate a better fit to the Mokken model.
+
+General guidelines for interpreting the scalability coefficients are:
+
+H > 0.5: Strong scalability
+0.4 < H ≤ 0.5: Moderate scalability
+0.3 < H ≤ 0.4: Weak scalability
+H ≤ 0.3: The scale is not considered scalable.
+
+Additionally, the output may provide information on the selected items for the Mokken scale and any items that were rejected.
+
+```{r}
+items.arg |>
+  as.data.frame() |>
+  aisp()
+```
+
+### Network visualisation
+
+```{r}
+network(items.arg)
+```
+
+## CFA
+
+### Fit model
+```{r}
+cfa_model <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9"
+```
+
+
+```{r}
+fitCFA.arg <- cfa(cfa_model, 
+                  estimator = "WLSMV", 
+                  data = items.arg,
+                  ordered = names(items.arg)
+)
+```
+
+### Model fit
+
+```{r}
+fitMeasures(fitCFA.arg, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+
+summary(fitCFA.arg, 
+        fit = T, 
+        std = T)
+```
+
+### 
+```{r}
+lavaan::resid(fitCFA.arg) # >.2
+```
+
+
+
+### Modifiaction Indices
+
+```{r}
+modification_indices <- modindices(fitCFA.arg, sort = TRUE, maximum.number = 5)
+
+modifications <- modification_indices %>% 
+  mutate(mods = paste(lhs, op, rhs)) %>% pull(mods)
+
+# Concatenate into a single string
+modifications_string <- paste(modifications, collapse = "\n")
+
+cat(modifications_string)
+```
+
+```{r}
+cfa_model_modified <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 + PFM16 + PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM33 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM40 + PFM43 + PFM44 + PFM46 + PFM49 + PFM51 + PFM53 + PFM6 + PFM7 + PFM9
+
+PFM38 ~~ PFM44
+PFM25 ~~ PFM26
+PFM44 ~~ PFM46
+PFM3 ~~ PFM6
+PFM34 ~~ PFM35
+"
+
+# Fit model
+fitCFA.arg_modified <- cfa(cfa_model_modified, 
+                           estimator = "WLSMV", 
+                           data = items.arg,
+                           ordered = names(items.arg)
+)
+```
+
+#### Comparing Model Fit
+```{r}
+fitMeasures(fitCFA.arg_modified, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+fitMeasures(fitCFA.arg, 
+            c("chisq.scaled", "df.scaled", "pvalue.scaled", 
+              "cfi.robust", "tli.robust", "rmsea.robust"))
+```
+
+
+```{r}
+summary(fitCFA.arg_modified, 
+        fit = T, 
+        std = T)
+
+anova(fitCFA.arg, 
+      fitCFA.arg_modified)
+```
+
+### Reliability
+
+```{r}
+semTools::reliability(fitCFA.arg)
+```
+
+<br>
+
+### Omega Analysis
+```{r}
+psych::omega(items.arg)
+```
+
+Explained Common Variance of the general factor =  0.66
+
+<br>
+
+## GRM
+
+https://github.com/ccs-amsterdam/r-course-material/blob/master/tutorials/R_test-theory_3_irt_graded.md#item-information-curves
+
+```{r}
+grm.arg <- mirt(items.arg, 1, itemtype = "graded")
+
+# Look at parameters
+coef(grm.arg, IRTpars = TRUE, simplifty = TRUE)
+
+# Fit statistics
+M2(grm.arg)
+```
+
+### Local dependency Yen’s Q3 residual covariance statistic
+```{r}
+# Local dependency Yen’s Q3 residual covariance statistic
+res <- residuals(grm.arg, type="Q3")
+res[res<0.2] <- NA
+res
+```
+
+### Correlation of sum scores and EAP scores
+
+```{r}
+EAPcor(grm.arg, items.arg)
+```
+
+### Item Characteristic Curves (ICCs)
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.arg, i) %>% print()
+  
+}
+```
+
+```{r}
+# Plot ICCs
+for (i in seq(from = 1, to = 35)) {
+  
+  mirt::itemplot(grm.arg, i, type = "info") %>% print()
+  
+}
+```
+
+
+### Test Information Curve
+
+```{r}
+# Plot test information curve
+plot(grm.arg, type = 'info', IRTpars = TRUE, xlim = c(-4, 4))
+
+```
+
+
+# Tables
+
+## From CFA
+```{r}
+summary_ger <- summary(fitCFA.ger, fit.measures = TRUE, standardized = TRUE)
+summary_arg <- summary(fitCFA.arg, fit.measures = TRUE, standardized = TRUE)
+summary_usa<- summary(fitCFA.usa, fit.measures = TRUE, standardized = TRUE)
+summary_all <- summary(fitCFA.all, fit.measures = TRUE, standardized = TRUE)
+```
+
+```{r}
+generate_summary_table <- function(country_code, summary_data) {
+  summary_table <- summary_data$fit %>% 
+    as.data.frame() %>%  
+    rownames_to_column("var") %>% 
+    filter(var %in% c("cfi", "cfi.robust",
+                      "tli", "tli.robust",
+                      "srmr",
+                      "rmsea", "rmsea.ci.lower", "rmsea.ci.upper", 
+                      "rmsea.robust", "rmsea.ci.lower.robust", "rmsea.ci.upper.robust"
+    )) %>%    
+    mutate(across(where(is.numeric), ~ round(.x, 3)),
+           country = country_code
+    ) %>% 
+    pivot_wider(names_from = "var",
+                values_from = ".") %>% 
+    mutate(
+      `RMSEA (90%CI)` = paste0(rmsea, " [", rmsea.ci.lower, ", ", rmsea.ci.upper, "]"),
+      
+      `RMSEA.robust (90%CI)` = paste0(rmsea.robust, " [", rmsea.ci.lower.robust, ", ", rmsea.ci.upper.robust, "]")) %>% 
+    dplyr::select(-c(rmsea, rmsea.robust, rmsea.ci.lower, rmsea.ci.upper, rmsea.ci.lower.robust, rmsea.ci.upper.robust)) %>%
+    rename_with(~ str_replace_all(.x, "\\.", "_") %>% 
+                  str_to_upper() %>% 
+                  str_replace("_ROBUST", " robust"))
+  return(summary_table)
+}
+```
+
+
+```{r}
+summary_table_ger <- generate_summary_table("Germany", summary_ger)
+summary_table_arg <- generate_summary_table("Argentina", summary_arg)
+summary_table_all <- generate_summary_table("All Countries", summary_all)
+summary_table_usa <- generate_summary_table("USA", summary_usa)
+
+summary_table <- bind_rows(
+  summary_table_all,
+  summary_table_usa,
+  summary_table_arg,
+  summary_table_ger)
+
+summary_table %>% flextable::flextable()
+```
+
+## From GRM
+
+```{r}
+# Fit statistics
+m2_all <- M2(grm.all)
+omega_all <- psych::omega(items.all)
+
+m2_ger <- M2(grm.ger)
+omega_ger <- psych::omega(items.ger)
+
+m2_arg <- M2(grm.arg)
+omega_arg <- psych::omega(items.arg)
+
+m2_usa <- M2(grm.usa)
+omega_usa <- psych::omega(items.usa)
+
+table_grm_fit <- bind_rows(m2_all,
+                           m2_ger,
+                           m2_arg,
+                           m2_usa) %>% rownames_to_column() %>% 
+  mutate(rowname = case_match(
+    rowname,
+    "stats...1" ~ "All Countries",
+    "stats...2" ~ "Germany",
+    "stats...3" ~ "Argentina",
+    "stats...4" ~ "USA"),
+    across(where(is.numeric), ~ round(.x, 3)),
+    p = round(p, 5), # Round column p to 5 decimal places
+    RMSEA = paste0(as.character(RMSEA), " [", as.character(RMSEA_5), ", ", as.character(RMSEA_95), "]")) %>% 
+  rename(Country = rowname) %>%
+  dplyr::select(-c(RMSEA_5, RMSEA_95))
+
+table_grm_fit %>% 
+  flextable::flextable()
+
+
+```
+
+<br>
+
+## Omega and ECV
+
+```{r}
+tribble(
+  ~Country, ~`RMSEA (90% CI)`, ~ECV, ~OmegaH,
+  "All", paste0(round(omega_all$stats$RMSEA[1], 3), " [", round(omega_all$stats$RMSEA[2],3), ", ", round(omega_all$stats$RMSEA[3], 3), "]"), omega_all$ECV, omega_all$omega_h,
+  "Ger", paste0(round(omega_ger$stats$RMSEA[1], 3), " [", round(omega_ger$stats$RMSEA[2],3), ", ", round(omega_ger$stats$RMSEA[3], 3), "]"), omega_ger$ECV, omega_ger$omega_h,
+  "Arg", paste0(round(omega_arg$stats$RMSEA[1], 3), " [", round(omega_arg$stats$RMSEA[2],3), ", ", round(omega_arg$stats$RMSEA[3], 3), "]"), omega_arg$ECV, omega_arg$omega_h,
+  "Usa", paste0(round(omega_usa$stats$RMSEA[1], 3), " [", round(omega_usa$stats$RMSEA[2],3), ", ", round(omega_usa$stats$RMSEA[3], 3), "]"), omega_usa$ECV, omega_usa$omega_h
+) %>% flextable::flextable()
+```
+
+# Without DIF items
+In all xxx analyses, item PFM46 was flagged for DIF in 53%, item PFM33 in 49%, PFM16 in 32%, PFM51 in 7%, and PFM40 was flagged in 5% of them. 
+
+```{r}
+dif_items <- c("PFM46",
+               "PFM33",
+               "PFM16",
+               "PFM51",
+               "PFM40"
+)
+```
+
+### Fit model
+```{r}
+cfa_model_dif <- "
+PF =~ PFM1 + PFM10 + PFM12 + PFM15 +  PFM17 + PFM18 + PFM19 + PFM2 + PFM21 + PFM23 + PFM25 + PFM26 + PFM27 + PFM28 + PFM29 + PFM3 + PFM32 + PFM34 + PFM35 + PFM36 + PFM37 + PFM38 + PFM4 + PFM43 + PFM44 + PFM49 + PFM53 + PFM6 + PFM7 + PFM9"
+```
+
+
+```{r}
+items.all_dif <- items.all %>% dplyr::select(-all_of(dif_items))
+items.usa_dif <- items.usa %>% dplyr::select(-all_of(dif_items))
+items.ger_dif <- items.ger %>% dplyr::select(-all_of(dif_items))
+items.arg_dif <- items.arg %>% dplyr::select(-all_of(dif_items))
+
+fitCFA.all_dif <- cfa(cfa_model_dif, 
+                      estimator = "WLSMV", 
+                      data = items.all_dif,
+                      ordered = names(items.all_dif)
+)
+
+fitCFA.usa_dif <- cfa(cfa_model_dif, 
+                      estimator = "WLSMV", 
+                      data = items.usa_dif,
+                      ordered = names(items.usa_dif)
+)
+
+fitCFA.arg_dif <- cfa(cfa_model_dif, 
+                      estimator = "WLSMV", 
+                      data = items.arg_dif,
+                      ordered = names(items.arg_dif)
+)
+
+fitCFA.ger_dif <- cfa(cfa_model_dif, 
+                      estimator = "WLSMV", 
+                      data = items.ger_dif,
+                      ordered = names(items.ger_dif)
+)
+
+summary_ger_dif <- summary(fitCFA.ger_dif, fit.measures = TRUE, standardized = TRUE)
+summary_arg_dif <- summary(fitCFA.arg_dif, fit.measures = TRUE, standardized = TRUE)
+summary_usa_dif <- summary(fitCFA.usa_dif, fit.measures = TRUE, standardized = TRUE)
+summary_all_dif <- summary(fitCFA.all_dif, fit.measures = TRUE, standardized = TRUE)
+
+summary_table_ger_dif <- generate_summary_table("Germany (DIF removed)", summary_ger_dif)
+summary_table_arg_dif <- generate_summary_table("Argentina (DIF removed)", summary_arg_dif)
+summary_table_all_dif <- generate_summary_table("All Countries (DIF removed)", summary_all_dif)
+summary_table_usa_dif <- generate_summary_table("USA (DIF removed)", summary_usa_dif)
+
+summary_table_dif <- bind_rows(
+  summary_table_all,
+  summary_table_all_dif,
+  summary_table_usa,
+  summary_table_usa_dif,
+  summary_table_arg,
+  summary_table_arg_dif,
+  summary_table_ger,
+  summary_table_ger_dif)
+
+summary_table_dif %>% flextable::flextable()
+```
+

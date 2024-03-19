@@ -1,0 +1,606 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitile: "3.0 Analysis the DIF Multiverse: Setup"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      lwd = 2,
+                      out.width = "100%",
+                      fig.width=10, 
+                      fig.height=10,
+                      fig.align = "center",
+                      dpi = 300)
+
+library(haven)
+library(lordif)
+body(plot.lordif)[[9]] <- NULL #https://stackoverflow.com/questions/52904512/r-lordif-rmarkdown
+
+library(readxl)
+library(arsenal) 
+library(summarytools) 
+library(hrbrthemes)
+library(cowplot)
+library(janitor)
+library(car)
+library(lavaan)
+library(semPlot)
+library(psych)
+library(nFactors)
+library(kableExtra)
+library(doParallel)
+library(gpttools)
+library(plyr)
+library(reshape)
+library(mirt)
+library(mirtCAT)
+library(rms)
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(pander)
+library(raincloudplots)
+library(dplyr)
+library(tidyverse)
+library(corrplot)
+
+options(scipen = 999)
+
+# Source helper functions
+source("R/helper-functions.R")
+source("R/estimate_parameters.R")
+source("R/prepare_promis_parameters.R")
+source("R/select_promis_parameters.R")
+source("R/create_purified_model.R")
+```
+
+
+# Overview
+
+This document creates a data frame from the multiverse results and adds baseline and corrected results to out
+
+<br>
+
+# 1. Setup
+
+## Data for analyses
+
+### Load data 
+```{r}
+### Primary Data 
+load("data/data_complete.rda")
+
+### Load data from analyses
+load("data/specifications.RData") # original data used in publication
+```
+
+### Load and prepare item parameters
+
+```{r}
+pars <- read.csv("data/tidy/PROMIS_PF_parameters_pertubated.csv") # pertubated item parameters, cannot be shared and needs to be obtained from PROMIS
+
+# All ceiling items
+pf_items <- c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+              "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+              "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+              "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+              "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53")
+
+# remove non-ceiling items from data
+data_clean <- data_complete %>% 
+  mutate(sample_id = respondent_id) %>% 
+  dplyr:: select(sample_id, country, age, all_of(pf_items)) 
+```
+
+
+## Data for item information
+
+```{r}
+data_items_spa <- read_excel("data/tidy/items_ao2.xlsx", sheet = 2)
+
+data_items_ger <- read_excel("data/tidy/items_ao2.xlsx", sheet = 3)
+
+data_items_eng <- read_excel("data/tidy/items_ao2.xlsx", sheet = 1) %>% 
+  filter(id %in% data_items_ger$id)
+```
+
+
+## Selecting Data
+
+```{r}
+# create a vector of countries to filter the data by
+grouping_vector <- c("usa", "ger", "arg")
+
+# filter the data by the countries in the grouping vector
+dat_usa_ger_arg <- filter_data(data_clean, 
+                               countries = grouping_vector)
+
+items_usa_ger_arg <- filter_items(data_clean, 
+                                  countries = grouping_vector)
+
+# create a vector of countries to filter the data by
+grouping_vector <- c("usa", "ger")
+
+# filter the data by the countries in the grouping vector
+dat_usa_ger<- filter_data(data_clean, 
+                          countries = grouping_vector)
+
+items_usa_ger <- filter_items(data_clean, 
+                              countries = grouping_vector)
+
+# create a vector of countries to filter the data by
+grouping_vector <- c("usa", "arg")
+
+# filter the data by the countries in the grouping vector
+dat_usa_arg <- filter_data(data_clean, 
+                           countries = grouping_vector)
+
+items_usa_arg <- filter_items(data_clean, 
+                              countries = grouping_vector)
+
+# create a vector of countries to filter the data by
+grouping_vector <- c("ger", "arg")
+
+# filter the data by the countries in the grouping vector
+dat_ger_arg <- filter_data(data_clean, 
+                           countries = grouping_vector)
+
+items_ger_arg <- filter_items(data_clean, 
+                              countries = grouping_vector)
+
+
+```
+
+<br>
+
+# 2. Create data frame with results from multiverse analysis
+
+Create data with information of which and how factors, and flagged items.
+```{r}
+specifications_results <- NULL
+
+# Create data frame row of first iteration
+specifications_results <- cbind(out[[1]]$specification, 
+                                k_flagged = length(out[[1]]$results[[length(out[[1]]$results)]]$Flagged_items),
+                                Flagged_items = paste0(out[[1]]$results[[length(out[[1]]$results)]]$Flagged_items, collapse = "-"))
+
+# add the additional rows
+for (i in 2:length(out)) {
+  current_specifications <- cbind(out[[i]]$specification, 
+                                  k_flagged = length(out[[i]]$results[[length(out[[i]]$results)]]$Flagged_items),
+                                  Flagged_items = paste0(out[[i]]$results[[length(out[[i]]$results)]]$Flagged_items, collapse = "-"))
+  specifications_results <- bind_rows(specifications_results, current_specifications)
+}
+```
+
+# 3. Add alternative thetas to out
+
+## Prepare PROMIS Parameters
+```{r}
+parameters_promis <- prepare_promis_parameters(pars = pars, 
+                                               pf_items = pf_items, 
+                                               data=dat_usa_ger_arg)
+```
+
+### Create baseline models
+```{r}
+grouping_vector <- c("usa", "ger", "arg")
+param_usa_ger_arg_mgroup <- estimate_parameters(dat_usa_ger_arg, grouping_vector)
+param_usa_ger_arg_promis <- select_promis_parameters(parameters_promis, grouping_vector)
+
+param_usa_ger_arg_mgroup %>% filter(item == "GROUP")
+param_usa_ger_arg_promis  %>% filter(item == "GROUP")
+```
+
+
+```{r}
+grouping_vector <- c("usa", "ger")
+param_usa_ger_mgroup <- estimate_parameters(dat_usa_ger, grouping_vector)
+param_usa_ger_promis <- select_promis_parameters(parameters_promis, grouping_vector)
+```
+
+
+```{r}
+grouping_vector <- c("usa", "arg")
+param_usa_arg_mgroup <- estimate_parameters(dat_usa_arg, grouping_vector)
+param_usa_arg_promis <- select_promis_parameters(parameters_promis, grouping_vector)
+```
+
+
+```{r}
+grouping_vector <- c("ger", "arg")
+param_ger_arg_mgroup <- estimate_parameters(dat_ger_arg, grouping_vector)
+param_ger_arg_promis <- select_promis_parameters(parameters_promis, grouping_vector)
+```
+
+
+### `create_baseline_dataframes()`
+```{r}
+create_baseline_dataframes <- function(countries) {
+  country_codes <- c("usa", "ger", "arg")
+  
+  if (!all(countries %in% country_codes)) {
+    stop("Invalid country code(s). Please use 'usa', 'ger', or 'arg'.")
+  }
+  
+  # Filter the data based on the input countries
+  dat_filtered <- dat_usa_ger_arg %>%
+    filter(country %in% countries)
+  
+  # Create group factor
+  group <- factor(dat_filtered$country, levels = country_codes)
+  
+  # Create a string with the country codes concatenated by underscores
+  country_str <- paste(countries, collapse = "_")
+  
+  # Select the correct parameters
+  mgroup_params <- get(paste0("param_", country_str, "_mgroup"))
+  promis_params <- get(paste0("param_", country_str, "_promis"))
+  
+  # Create the baseline dataframes
+  assign(paste0("baseline_", country_str, "_mgroup"), 
+         multipleGroup(dat_filtered[, -c(1:3)], 
+                       group = group, 
+                       model = 1, 
+                       itemtype = "graded", 
+                       pars = mgroup_params), 
+         envir = .GlobalEnv)
+  
+  assign(paste0("baseline_", country_str, "_promis"), 
+         multipleGroup(dat_filtered[, -c(1:3)], 
+                       group = group, 
+                       model = 1, 
+                       itemtype = "graded", 
+                       pars = promis_params), 
+         envir = .GlobalEnv)
+}
+
+create_baseline_dataframes(c("usa", "ger", "arg"))
+create_baseline_dataframes(c("ger", "arg"))
+create_baseline_dataframes(c("usa", "arg"))
+create_baseline_dataframes(c("usa", "ger"))
+```
+
+
+```{r}
+# List of Baseline Models with Promis Parameters
+baseline_models <- list(
+  
+  baseline_usa_ger_arg_mgroup = baseline_usa_ger_arg_mgroup, 
+  baseline_usa_ger_arg_promis = baseline_usa_ger_arg_promis, 
+  
+  baseline_usa_ger_mgroup = baseline_usa_ger_mgroup, 
+  baseline_usa_ger_promis = baseline_usa_ger_promis, 
+  
+  baseline_usa_arg_mgroup = baseline_usa_arg_mgroup, 
+  baseline_usa_arg_promis = baseline_usa_arg_promis, 
+  
+  baseline_ger_arg_mgroup = baseline_ger_arg_mgroup, 
+  baseline_ger_arg_promis = baseline_ger_arg_promis
+)
+```
+
+## Add thetas and model for baseline models to out
+
+```{r}
+# Define a lookup table for the models
+model_lookup <- list(
+  'usa-ger-arg' = list(
+    'parameters_multigroup' = baseline_models$baseline_usa_ger_arg_mgroup,
+    'parameters_promis' = baseline_models$baseline_usa_ger_arg_promis
+  ),
+  'usa-ger' = list(
+    'parameters_multigroup' = baseline_models$baseline_usa_ger_mgroup,
+    'parameters_promis' = baseline_models$baseline_usa_ger_promis
+  ),
+  'ger-arg' = list(
+    'parameters_multigroup' = baseline_models$baseline_ger_arg_mgroup,
+    'parameters_promis' = baseline_models$baseline_ger_arg_promis
+  ),
+  'usa-arg' = list(
+    'parameters_multigroup' = baseline_models$baseline_usa_arg_mgroup,
+    'parameters_promis' = baseline_models$baseline_usa_arg_promis
+  )
+)
+```
+
+```{r}
+# Function to get the model based on specification
+get_model <- function(wf_1_comparison, hf_2_parameter_vector) {
+  if (!wf_1_comparison %in% names(model_lookup)) {
+    stop("Invalid wf_1_comparison")
+  }
+  models_for_comparison <- model_lookup[[wf_1_comparison]]
+  if (!hf_2_parameter_vector %in% names(models_for_comparison)) {
+    stop("Invalid hf_2_parameter_vector")
+  }
+  return(models_for_comparison[[hf_2_parameter_vector]])
+}
+
+# Function to create baseline_model list
+create_baseline_model <- function(model) {
+  theta_values <- fscores(model)
+  return(list(
+    model = model, # corrected model
+    parameter = mod2values(model),
+    thetas = theta_values,
+    theta_se = fscores(model, full.scores.SE = TRUE)[, "SE_F1"] %>% as.vector(),
+    ets = mirt::expected.test(model, Theta = theta_values, group = 1)
+  ))
+}
+
+# Main loop
+for (i in 1:length(out)) {
+  wf_1_comparison <- as.character(out[[i]]$specification$wf_1_comparison)
+  hf_2_parameter_vector <- out[[i]]$specification$hf_2_parameter_vector
+  
+  # Use the function to get the model
+  mod <- get_model(wf_1_comparison, hf_2_parameter_vector)
+  
+  # Create baseline_model list
+  out[[i]]$results_baseline <- create_baseline_model(mod)
+  
+  # Store the theta_baseline (for compatibility or other uses)
+  out[[i]]$theta_baseline <- out[[i]]$results_baseline$thetas
+}
+```
+
+
+```{r working-version}
+#baseline <- list()
+#
+#for (i in 1:length(out)) {
+#  switch(as.character(out[[i]]$specification$wf_1_comparison),
+#         "usa-ger-arg" = {
+#           if (out[[i]]$specification$hf_2_parameter_vector == "parameters_multigroup") {
+#             baseline$mod <- baseline_models$baseline_usa_ger_arg_mgroup
+#           } else if (out[[i]]$specification$hf_2_parameter_vector == "parameters_promis") {
+#             baseline$mod <- baseline_models$baseline_usa_ger_arg_promis
+#           } else {
+#             stop("Invalid hf_2_parameter_vector")
+#           }
+#           out[[i]]$theta_baseline <- fscores(baseline$mod)
+#           
+#         },
+#         "usa-ger" = {
+#           if (out[[i]]$specification$hf_2_parameter_vector == "parameters_multigroup") {
+#             baseline$mod <- baseline_models$baseline_usa_ger_mgroup
+#           } else if (out[[i]]$specification$hf_2_parameter_vector == "parameters_promis") {
+#             baseline$mod <- baseline_models$baseline_usa_ger_promis
+#           } else {
+#             stop("Invalid hf_2_parameter_vector")
+#           }
+#           out[[i]]$theta_baseline <- fscores(baseline$mod)
+#           
+#         },
+#         "usa-arg" = {
+#           if (out[[i]]$specification$hf_2_parameter_vector == "parameters_multigroup") {
+#             baseline$mod <- baseline_models$baseline_usa_arg_mgroup
+#           } else if (out[[i]]$specification$hf_2_parameter_vector == "parameters_promis") {
+#             baseline$mod <- baseline_models$baseline_usa_arg_promis
+#           } else {
+#             stop("Invalid hf_2_parameter_vector")
+#           }
+#           out[[i]]$theta_baseline <- fscores(baseline$mod)
+#           
+#         },
+#         "ger-arg" = {
+#           if (out[[i]]$specification$hf_2_parameter_vector == "parameters_multigroup") {
+#             baseline$mod <- baseline_models$baseline_ger_arg_mgroup
+#           } else if (out[[i]]$specification$hf_2_parameter_vector == "parameters_promis") {
+#             baseline$mod <- baseline_models$baseline_ger_arg_promis
+#           } else {
+#             stop("Invalid hf_2_parameter_vector")
+#           }
+#           out[[i]]$theta_baseline <- fscores(baseline$mod)
+#           
+#         },
+#         {
+#           stop("Invalid wf_1_comparison")
+#         }
+#  )
+#}
+```
+
+## Add thetas from corrected models to out
+
+### Add model
+```{r}
+out <- lapply(out, function(x) {
+  x$results_corrected <- x$results[[length(x$results)]]$corrected_model
+  return(x)
+})
+```
+
+### Add thetas
+```{r}
+out <- lapply(out, function(x) {
+  x$theta_corrected <- as.vector(fscores(x$results[[length(x$results)]]$corrected_model$model))
+  return(x)
+})
+```
+
+
+
+## Add thetas from purified models to out
+
+```{r}
+# Function to prepare data and parameters
+prepare_data_and_params <- function(wf_1_comparison, hf_2_parameter_vector, flagged_items) {
+  data <- get(paste0("dat_", gsub("-", "_", wf_1_comparison)))
+  param_type <- ifelse(str_detect(hf_2_parameter_vector, "promis"), "promis", "mgroup")
+  param <- get(paste0("param_", gsub("-", "_", wf_1_comparison), "_", param_type)) 
+  param <- param %>% dplyr::filter(!item %in% flagged_items) %>% 
+    dplyr::mutate(parnum = 1:nrow(.))
+  return(list(data = data, param = param))
+}
+
+# Improved loop
+for (i in 1:length(out)) {
+  tryCatch({
+    wf_1_comparison <- as.character(out[[i]]$specification$wf_1_comparison)
+    hf_2_parameter_vector <- out[[i]]$specification$hf_2_parameter_vector
+    flagged_items <- out[[i]]$results$`last iteration`$Flagged_items
+    
+    # Prepare data and parameters
+    prep <- prepare_data_and_params(wf_1_comparison, hf_2_parameter_vector, flagged_items)
+    
+    # Run the model creation function
+    out[[i]]$results_purified <- create_purified_model(
+      prep$data, 
+      unlist(strsplit(wf_1_comparison, "-")),
+      hf_2_parameter_vector, 
+      flagged_items, 
+      prep$param)
+    
+    out[[i]]$theta_purified <- out[[i]]$results_purified$thetas
+  }, 
+  error = function(e) {
+    # Error handling
+    if(grepl("Too few degrees of freedom", e$message) || 
+       grepl("Rows in supplied and starting value data.frame objects do not match", e$message) || 
+       grepl("length of 'dimnames'", e$message)) {
+      out[[i]]$theta_purified <- NA
+    } else {
+      stop(e)
+    }
+  })
+}
+
+```
+
+
+```{r works}
+#for (i in 1:length(out)) {
+#  tryCatch(
+#    {
+#      wf_1_comparison <- as.character(out[[i]]$specification$wf_1_comparison)
+#      hf_2_parameter_vector <- out[[i]]$specification$hf_2_parameter_vector
+#      flagged_items <- out[[i]]$results$`last iteration`$Flagged_items
+#      
+#      if (str_detect(hf_2_parameter_vector, "promis")) {
+#        # Select appropriate dataset and parameters based on comparison
+#        data <- get(paste0("dat_", gsub("-", "_", wf_1_comparison)))
+#        param <- get(paste0("param_", gsub("-", "_", wf_1_comparison), "_", "promis")) 
+#        param <- param %>% filter(!item %in% flagged_items) %>% 
+#          mutate(parnum = 1:nrow(.))
+#        out[[i]]$results_purified <- create_purified_model(data, 
+#                                                                          #unlist(strsplit(wf_1_comparison, "-")),
+#                                                                          hf_2_parameter_vector, 
+#                                                                          flagged_items, 
+#                                                                          param)
+#        out[[i]]$theta_purified <- out[[i]]$results_purified$thetas
+#        
+#      } else if(str_detect(hf_2_parameter_vector, "multigroup")){
+#        # Select appropriate dataset and parameters based on comparison
+#        data <- get(paste0("dat_", gsub("-", "_", wf_1_comparison)))
+#        param <- get(paste0("param_", gsub("-", "_", wf_1_comparison), "_", "mgroup")) 
+#        param <- param %>% filter(!item %in% flagged_items) %>% 
+#          mutate(parnum = 1:nrow(.))
+#        out[[i]]$results_purified <- create_purified_model(data, 
+#                                                                          #unlist(strsplit(wf_1_comparison, "-")),
+#                                                                          hf_2_parameter_vector, 
+#                                                                          flagged_items, 
+#                                                                          param)
+#        out[[i]]$theta_purified <- out[[i]]$results_purified$thetas
+#      }
+#    },
+#    error = function(e) {
+#      if(grepl("Too few degrees of freedom", e$message) || 
+#         grepl("Rows in supplied and starting value data.frame objects do not match", e$message) || 
+#         grepl("length of 'dimnames'", e$message)) {
+#        out[[i]]$theta_purified <- NA
+#      } else {
+#        stop(e)
+#      }
+#    }
+#  )
+#}
+
+
+```
+
+```{r working version}
+#for (i in 1:length(out)) {
+#  tryCatch(
+#    {
+#      wf_1_comparison <- as.character(out[[i]]$specification$wf_1_comparison)
+#      hf_2_parameter_vector <- out[[i]]$specification$hf_2_parameter_vector
+#      flagged_items <- out[[i]]$results$`last iteration`$Flagged_items
+#      
+#      if (str_detect(hf_2_parameter_vector, "promis")) {
+#        # Select appropriate dataset and parameters based on comparison
+#        data <- get(paste0("dat_", gsub("-", "_", wf_1_comparison)))
+#        param <- get(paste0("param_", gsub("-", "_", wf_1_comparison), "_", "promis")) 
+#        param <- param %>% filter(!item %in% flagged_items) %>% 
+#          mutate(parnum = 1:nrow(.))
+#        out[[i]]$theta_purified <- create_purified_model(data, 
+#                                                         unlist(strsplit(wf_1_comparison, "-")),
+#                                                         hf_2_parameter_vector, 
+#                                                         flagged_items, 
+#                                                         param)
+#        
+#      } else if(str_detect(hf_2_parameter_vector, "multigroup")){
+#        # Select appropriate dataset and parameters based on comparison
+#        data <- get(paste0("dat_", gsub("-", "_", wf_1_comparison)))
+#        param <- get(paste0("param_", gsub("-", "_", wf_1_comparison), "_", "mgroup")) 
+#        param <- param %>% filter(!item %in% flagged_items) %>% 
+#          mutate(parnum = 1:nrow(.))
+#        out[[i]]$theta_purified <- create_purified_model(data, 
+#                                                         unlist(strsplit(wf_1_comparison, "-")),
+#                                                         hf_2_parameter_vector, 
+#                                                         flagged_items, 
+#                                                         param)
+#      }
+#    },
+#    error = function(e) {
+#      if(grepl("Too few degrees of freedom", e$message) || 
+#         grepl("Rows in supplied and starting value data.frame objects do not match", e$message) || 
+#         grepl("length of 'dimnames'", e$message)) {
+#        out[[i]]$theta_purified <- NA
+#      } else {
+#        stop(e)
+#      }
+#    }
+#  )
+#}
+#
+```
+
+```{r}
+for (i in seq_along(out)) {
+  # Rename 'results' to 'analysis_results' if it exists
+  if ("results" %in% names(out[[i]])) {
+    names(out[[i]])[names(out[[i]]) == "results"] <- "analysis_results"
+  }
+  
+  # Order the elements of each sublist based on the names
+  out[[i]] <- out[[i]][order(names(out[[i]]))]
+}
+```
+
+
+### Save out
+
+```{r}
+save(out, file = "data/results.RData")
+```
+

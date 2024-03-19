@@ -1,0 +1,1062 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitile: "3.1 Influence of Flagged DIF Items at the Item Level "
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+knit: (function(inputFile, encoding) {
+      rmarkdown::render(inputFile, 
+      encoding = encoding, 
+      output_dir = "vignettes") })
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      lwd = 2,
+                      out.width = "100%",
+                      fig.width=8, 
+                      fig.height=8,
+                      fig.align = "center",
+                      dpi = 300)
+
+library(tidyverse)
+library(gridExtra)
+library(cowplot)
+library(readxl)
+
+options(scipen = 999)
+```
+
+
+# Load and clean data
+
+- Load data including all specifications from previous step.
+- Indicate if item was flagged = 1 or was not flagged = 0
+
+```{r}
+all_specifications <- read.csv("data/specification_results.csv") %>% 
+  dplyr::mutate(row = row_number(),
+                hf_2_parameter = hf_2_parameter_vector )   %>% 
+  
+  # Indicate if item was flagged = 1 or was not flagged = 0
+  separate_rows(Flagged_items, sep = "-") %>%
+  mutate(value = 1) %>%
+  spread(Flagged_items, value, fill = 0) %>% # Creates automatically V1 indicating where no Items were flagged
+  # Combine criterion and threshold into variable hf_3_criterion
+  mutate(hf_3_criterion = paste0(hf_3_criterion, ": ", hf_4_threshold)) %>% 
+  dplyr::select(-c(X)) %>% 
+  
+  # create overall method variable
+  mutate(method = case_when(
+    str_detect(hf_3_criterion, "Cox") ~ "R2 Cox",
+    str_detect(hf_3_criterion, "McFadden") ~ "R2 McFadden",
+    str_detect(hf_3_criterion, "Nagelkerke") ~ "R2 Nagelkerke",
+    str_detect(hf_3_criterion, "beta") ~ "beta",
+    str_detect(hf_3_criterion, "lr") ~ "lr",
+    TRUE ~ "other" #
+  )) 
+```
+
+## Choose Specifications
+
+Create data sets that have either all specifications, no LR analyses, or only LR analyses.
+```{r}
+nolr_specifications <- all_specifications %>% 
+  filter(method != "lr") %>% 
+  dplyr::select(-row) %>%
+  distinct()
+
+specifications_only_lr <- all_specifications %>% 
+  filter(method == "lr")
+
+specifications <- all_specifications
+```
+
+## Create Vector with Ceiling items
+```{r}
+pf_items <- c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+              "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+              "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+              "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+              "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53")
+```
+
+<br>
+
+# Figure: Item Specific Despriptive Specification Plot
+
+## Preparation
+
+<br>
+
+### Which factors
+
+```{r}
+wf_1_comparison_vec <- unique(specifications$wf_1_comparison)
+```
+
+### How Factors
+
+```{r}
+hf_1_correction_vec <- unique(specifications$hf_1_correction)
+hf_2_parameter_vec <- unique(specifications$hf_2_parameter)
+vec <- unique(nolr_specifications$hf_3_criterion)
+hf_3_criterion_vec <- vec[order(
+  sub(":.*", "", vec) != "beta",
+  sub(":.*", "", vec) != "CoxSnell",
+  sub(":.*", "", vec) != "McFadden",
+  sub(":.*", "", vec) != "Nagelkerke",
+  sub(":.*", "", vec),
+  as.numeric(sub(".*:", "", vec))
+)]
+
+number_which_how_factors <- 4
+
+ylabels <- rev(c(
+  "Comparison: USA-GER-ARG",  
+  "Comparison: USA-GER",
+  "Comparison: USA-ARG", 
+  "Comparison: GER-ARG",
+  
+  "Correction: For Age",  
+  "Correction: None",  
+  
+  "Parameters: Estimated", 
+  "Parameters: PROMIS",
+  
+  "Criterion: Beta: 0.05",
+  "Criterion: Beta: 0.10",
+  
+  "Criterion: Cox-Snell: 0.02",
+  "Criterion: Cox-Snell: 0.03",
+  "Criterion: Cox-Snell: 0.05",
+  "Criterion: McFadden: 0.02",
+  "Criterion: McFadden: 0.03",
+  "Criterion: McFadden: 0.05",
+  "Criterion: Nagelkerke: 0.02",
+  "Criterion: Nagelkerke: 0.03",
+  "Criterion: Nagelkerke: 0.05"#,
+# "Comparison: USA-GER-ARG (1.5%)",  
+# "Comparison: USA-GER (0.1%)",
+# "Comparison: USA-ARG (1.1%)", 
+# "Comparison: GER-ARG (2.2%)",
+# 
+# "Correction: For Age (2.0%)",  
+# "Correction: None (2.8%)",  
+# 
+# "Parameters: Estimated (2.4%)", 
+# "Parameters: PROMIS (2.4%)",
+# 
+# "Criterion: Beta: 0.05 (0.9%)",
+# "Criterion: Beta: 0.10 (0.4%)",
+# 
+# "Criterion: Cox-Snell: 0.02 (0.8%)",
+# "Criterion: Cox-Snell: 0.03 (0.6%)",
+# "Criterion: Cox-Snell: 0.05 (0.4%)",
+# "Criterion: McFadden: 0.02 (0.5%)",
+# "Criterion: McFadden: 0.03 (0.4%)",
+# "Criterion: McFadden: 0.05 (0.1%)",
+# "Criterion: Nagelkerke: 0.02 (0.4%)",
+# "Criterion: Nagelkerke: 0.03 (0.3%)",
+# "Criterion: Nagelkerke: 0.05 (0.1%)"#,
+# 
+  #"Criterion: LR: 1%",
+  #"Criterion: LR: 5%",
+  #"Criterion: LR Benjamini-Hochberg: 1%",
+  #"Criterion: LR Benjamini-Hochberg: 5%",
+  #"Criterion: LR Bonferroni: 1%",
+  #"Criterion: LR Bonferroni: 5%"
+))
+
+# colors for flagged items
+cols <- c("orange",
+          "purple")
+
+# vector needed for plotting
+length_of_each_factor <- c(
+  length(hf_3_criterion_vec),
+  length(hf_2_parameter_vec) +  length(hf_3_criterion_vec) ,
+  length(hf_1_correction_vec) +   length(hf_2_parameter_vec) +  length(hf_3_criterion_vec),
+  length(wf_1_comparison_vec) +   length(hf_1_correction_vec) +   length(hf_2_parameter_vec) +  length(hf_3_criterion_vec))
+```
+
+## `create_tile_plot()`
+
+```{r}
+create_tile_plot <- function(specifications, pf_item) {
+  
+  x_rank <- rank(specifications[[pf_item]],  
+                 ties.method = "random")
+  
+  ### Create all factors
+  yvar <- rep(factor(rev(c(
+    wf_1_comparison_vec,
+    hf_1_correction_vec,
+    hf_2_parameter_vec,
+    hf_3_criterion_vec)), 
+    levels = rev(c(
+      wf_1_comparison_vec,
+      hf_1_correction_vec,
+      hf_2_parameter_vec,
+      hf_3_criterion_vec))), 
+    times = nrow(specifications))
+  
+  xvar <- rep(x_rank, 
+              each = length(levels(yvar)))
+  
+  flagged <- rep(specifications[[pf_item]],
+                 each = length(levels(yvar)))
+  spec <- NULL
+  
+  for(i in 1:nrow(specifications)) {
+    id <- as.numeric(levels(yvar) %in% 
+                       as.character(unlist(
+                         specifications[i, 1:number_which_how_factors])))  
+    spec <- c(spec, id)
+  }
+  
+  plotdata <- data.frame(xvar, 
+                         yvar, 
+                         spec,
+                         flagged) %>% 
+    mutate(fill = ifelse(spec == 1 & flagged == 1, 2, ifelse(spec == 1 & flagged == 0, 1, 0)))
+  
+  
+  tile_plot <- ggplot(data = plotdata, 
+                      aes(x = xvar, 
+                          y = as.factor(yvar), 
+                          fill = factor(fill))) +
+    geom_raster() + 
+    geom_hline(yintercept = length_of_each_factor + 0.5) +  # Change lines here here
+    scale_x_continuous(position = "bottom") +
+    scale_y_discrete(labels = ylabels) +
+    scale_fill_manual(
+      values = c("white", cols)) +
+    labs(x = "Specification number", 
+         y = "Which/How factors") +
+    coord_cartesian(
+      expand = F, 
+      xlim = c(0.5, nrow(specifications) + 0.5)) +
+    theme_bw() + 
+    theme(legend.position = "none",
+          axis.text.y = element_text(colour = "black", size = 8),
+          axis.text.x = element_text(colour = "black"),
+          axis.ticks = element_line(colour = "black"),
+          plot.margin = margin(t = 5.5, 
+                               r = 5.5, 
+                               b = 5.5, 
+                               l = 5.5, 
+                               unit = "pt"))
+  return(tile_plot)
+}
+```
+
+```{r}
+create_tile_plot(specifications, "PFM46")
+create_tile_plot(nolr_specifications, "PFM46")
+
+```
+
+
+
+## `create_flag_plot()`
+```{r}
+create_flag_plot <- function(specifications, pfm) {
+  
+  specifications$xvar <- rank(specifications[[pfm]],  
+                              ties.method = "random")
+  # Create a ggplot for the specified PFM item
+  ggplot_spec <- ggplot(specifications, aes(x = xvar, 
+                                            y = as.numeric(.data[[pfm]] == 1),
+                                            fill = factor(.data[[pfm]]))) +
+    geom_tile(aes(width = 1, height = 1)) +
+    scale_fill_manual(values = cols) +
+    labs(x = "", y = NULL, title = "") +
+    guides(fill = FALSE) +
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme_void()
+  
+  # Return the ggplot object
+  return(ggplot_spec)
+}
+```
+
+
+## Combine Plots
+
+```{r}
+# Loop over each PFM item
+for (pfm in pf_items) {
+  # Create the flagged plot
+  flagged_plot <- create_flag_plot(nolr_specifications, pfm)
+  
+  # Create the tile plot
+  tile_plot <- create_tile_plot(nolr_specifications, pfm)
+  
+  # Create the grid of plots
+  plot_grid <- plot_grid(
+    flagged_plot,
+    tile_plot,
+    labels = c(pfm, ""),
+    ncol = 1,
+    align = "v",
+    rel_heights = c(0.5, 5)
+  )
+  
+plot_grid
+}
+
+```
+
+# Figure: Descriptive Specification Plot
+
+## Only Flagged Items
+
+### Flagged Plot
+```{r}
+# Create a list to hold the flagged plots for each PFM item
+flagged_plots <- list()
+
+# Loop over the PFM items and create a flagged plot for each one
+for (pfm in pf_items) {
+  flagged_plots[[pfm]] <- create_flag_plot(nolr_specifications, pfm)
+}
+
+# Combine all the flagged plots into a grid of plots in one column
+flagged_grid <- plot_grid(plotlist = flagged_plots, 
+                          labels = pf_items,
+                          label_size = 8,
+                          ncol = 1)
+
+# Display the grid of plots
+flagged_grid
+```
+
+
+### Tile Plot
+```{r}
+specifications_long <- specifications  %>% 
+  pivot_longer(cols = PFM1:PFM9,
+               names_to = "item") %>% filter(value == 1)
+
+yvar <- rep(factor(rev(c(
+  wf_1_comparison_vec,
+  hf_1_correction_vec,
+  hf_2_parameter_vec,
+  hf_3_criterion_vec)), 
+  levels = rev(c(
+    wf_1_comparison_vec,
+    hf_1_correction_vec,
+    hf_2_parameter_vec,
+    hf_3_criterion_vec))), 
+  times = nrow(specifications_long))
+
+#### Rank each summary effect size by magnitude
+
+x_rank <- rank(specifications_long$value, 
+               ties.method = "random")
+
+flagged <- rep(specifications_long$value, 
+               each = length(levels(yvar)))
+spec <- NULL
+
+#### Determine which specifications are observed and which are not
+
+for(i in 1:nrow(specifications_long)) {
+  id <- as.numeric(levels(yvar) %in% 
+                     as.character(unlist(
+                       specifications_long[i, 1:number_which_how_factors])))  
+  spec <- c(spec, id)
+}
+
+xvar <- rep(x_rank, 
+            each = length(levels(yvar)))
+
+plotdata <- data.frame(xvar, 
+                       yvar, 
+                       spec,
+                       flagged)
+
+
+# Generate a color palette
+num_colors <- length(unique(plotdata$xvar))
+colors <- colorRampPalette(c("blue", "purple", "orange"))(num_colors)
+
+# Map each unique xvar to a color
+color_map <- setNames(colors, unique(plotdata$xvar))
+
+
+plotdata <- plotdata %>% 
+  mutate(fill = ifelse(spec == 1 & flagged == 1, 2, ifelse(spec == 1 & flagged == 0, 1, 0)))
+
+tile_plot_all_items <- ggplot(data = plotdata, 
+                              aes(x = xvar, 
+                                  y = as.factor(yvar), 
+                                  fill = factor(fill))) +
+  geom_raster() + 
+  geom_hline(yintercept = length_of_each_factor + 0.5) +  # Change lines here here
+  scale_x_continuous(position = "bottom") +
+  scale_y_discrete(labels = ylabels) +
+  scale_fill_manual(values = c("white", "orange")) +
+  labs(x = "Specification number", 
+       y = "Which/How factors") +
+  coord_cartesian(
+    expand = F, 
+    xlim = c(0.5, nrow(specifications_long) + 0.5)) +
+  theme_bw() + 
+  theme(legend.position = "none",
+        axis.text.y = element_text(colour = "black", size = 8),
+        axis.text.x = element_text(colour = "black"),
+        axis.ticks = element_line(colour = "black"),
+        plot.margin = margin(t = 5.5, 
+                             r = 5.5, 
+                             b = 5.5, 
+                             l = 5.5, 
+                             unit = "pt"))
+
+tile_plot_all_items
+```
+
+
+## All Items
+```{r}
+specifications_long <- specifications  %>% 
+  pivot_longer(cols = PFM1:PFM9,
+               names_to = "item") 
+
+yvar <- rep(factor(rev(c(
+  wf_1_comparison_vec,
+  hf_1_correction_vec,
+  hf_2_parameter_vec,
+  hf_3_criterion_vec)), 
+  levels = rev(c(
+    wf_1_comparison_vec,
+    hf_1_correction_vec,
+    hf_2_parameter_vec,
+    hf_3_criterion_vec))), 
+  times = nrow(specifications_long))
+
+#### Rank each summary effect size by magnitude
+
+x_rank <- rank(specifications_long$value, 
+               ties.method = "random")
+
+flagged <- rep(specifications_long$value, 
+               each = length(levels(yvar)))
+spec <- NULL
+
+#### Determine which specifications are observed and which are not
+
+for(i in 1:nrow(specifications_long)) {
+  id <- as.numeric(levels(yvar) %in% 
+                     as.character(unlist(
+                       specifications_long[i, 1:number_which_how_factors])))  
+  spec <- c(spec, id)
+}
+
+xvar <- rep(x_rank, 
+            each = length(levels(yvar)))
+
+plotdata <- data.frame(xvar, 
+                       yvar, 
+                       spec,
+                       flagged)
+
+
+plotdata <- plotdata %>% 
+  mutate(fill = ifelse(spec == 1 & flagged == 1, 2, ifelse(spec == 1 & flagged == 0, 1, 0)))
+```
+
+### Universe tile plot
+
+```{r}
+tile_plot_all_items <- ggplot(data = plotdata, 
+                              aes(x = xvar, 
+                                  y = as.factor(yvar), 
+                                  fill = factor(fill))) +
+  geom_raster() + 
+  geom_hline(yintercept = length_of_each_factor + 0.5) +  # Change lines here here
+  scale_x_continuous(position = "bottom") +
+  scale_y_discrete(labels = ylabels) +
+  scale_fill_manual(
+    values = c("white", cols)) +
+  labs(x = "Specification number", 
+       y = "Which/How factors") +
+  coord_cartesian(
+    expand = F, 
+    xlim = c(0.5, nrow(specifications_long) + 0.5)) +
+  theme_bw() + 
+  theme(legend.position = "none",
+        axis.text.y = element_text(colour = "black", size = 8),
+        axis.text.x = element_text(colour = "black"),
+        axis.ticks = element_line(colour = "black"),
+        plot.margin = margin(t = 5.5, 
+                             r = 5.5, 
+                             b = 5.5, 
+                             l = 5.5, 
+                             unit = "pt"))
+tile_plot_all_items
+```
+
+
+# Tables
+
+## Overall Flagged Items
+
+### All Analyses
+
+```{r}
+result_overall_all <- all_specifications %>%
+  dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "sum") %>% 
+  mutate(percent = round(sum/nrow(all_specifications)*100, 1)) %>% arrange(desc(percent))
+
+print(result_overall_all) 
+
+# 5 most flagged items
+print(result_overall_all) %>% slice(1:5) %>% pull(variable)
+
+# Percentage of flagged items
+result_overall_all %>% 
+  summarise(sum = sum(sum)) %>% 
+  mutate(percent_flagged = sum / (nrow(all_specifications)*35) *100) 
+```
+
+### Only LR
+```{r}
+result_overall_lr <- specifications_only_lr %>%
+  dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "sum") %>% 
+  mutate(percent = sum/nrow(specifications)*100) %>% 
+  arrange(desc(percent))
+
+print(result_overall_lr) 
+
+# 5 most flagged items
+print(result_overall_lr) %>% slice(1:5) %>% pull(variable)
+
+# Percentage of flagged items
+result_overall_lr %>% summarise(sum = sum(sum)) %>% 
+  mutate(percent_flagged = sum / (nrow(specifications_only_lr)*35) *100)
+```
+
+### No LR
+
+```{r}
+result_overall <- nolr_specifications %>%
+  dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "sum") %>% 
+  mutate(percent = round(sum/nrow(specifications)*100, 1)) %>% arrange(desc(percent))
+
+print(result_overall) 
+
+# 5 most flagged items
+print(result_overall) %>% slice(1:5) %>% pull(variable)
+
+# Percentage of flagged items
+result_overall %>% 
+  summarise(sum = sum(sum)) %>% 
+  mutate(percent_flagged = sum / (nrow(nolr_specifications)*35) *100) 
+
+```
+
+```{r}
+data_items_ger <-  read_excel("data/tidy/items_ao2.xlsx", sheet = 3)
+
+data_items_eng <- read_excel("data/tidy/items_ao2.xlsx", sheet = 1) %>% 
+  filter(id %in% data_items_ger$id)
+
+data_items_eng %>% left_join(result_overall, by = c("id" = "variable")) %>% drop_na(sum) %>% 
+  dplyr::select(`PROMIS Item` = id,
+                `Item Stem` = item,
+                # `Response Categories` = response,
+                `k` = sum,
+                Percent = percent)
+```
+
+
+
+## At least X flagged item(s)
+```{r}
+nolr_specifications %>% filter(k_flagged>=1) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=2) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=3) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=4) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=5) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=6) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=7) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=8) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=9) %>% nrow() / nrow(nolr_specifications)*100
+nolr_specifications %>% filter(k_flagged>=10) %>% nrow() / nrow(nolr_specifications)*100
+```
+
+
+```{r}
+nolr_specifications %>% arrange(desc(k_flagged)) 
+```
+
+1. Item `r result_overall$variable[1]` was flagged for DIF in `r round(result_overall$percent[1], 1)`% of all analyses conducted.
+
+2. In `r round(result_overall$percent[2], 1)`% of the analyses performed, item `r result_overall$variable[2]` was flagged.
+
+3. `r round(result_overall$percent[3], 1)`% of all conducted analyses indicated a flag for item `r result_overall$variable[3]`.
+
+4. The analysis flagged item `r result_overall$variable[4]` in `r round(result_overall$percent[4], 1)`% of the cases.
+
+5. Throughout all analyses, item `r result_overall$variable[5]` was flagged in `r round(result_overall$percent[5], 1)`% of them.
+
+<br>
+
+## create_flagged_item_table()
+
+Function that takes the specification data and creates summary tables of flagged items
+```{r}
+create_flagged_item_level_table <- function(data, variable) {
+  data %>%
+    dplyr::group_by({{variable}}) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -{{variable}}, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/nrow(data)*100) %>% 
+    dplyr::arrange(desc(sum)) 
+}
+
+create_flagged_item_table <- function(data, variable) {
+  data %>%
+    dplyr::group_by({{variable}}) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -{{variable}}, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/nrow(data)*100) %>% 
+    dplyr::arrange(desc(sum)) %>% 
+    dplyr::group_by({{variable}})%>% 
+    dplyr::summarise(sum = sum(sum)) %>% 
+    dplyr::mutate(percent_flagged = sum / (nrow(data)*35) *100)
+}
+```
+
+```{r}
+Nagelkerke <- c("Nagelkerke: 0.05", "Nagelkerke: 0.03", "Nagelkerke: 0.02")
+CoxSnell <- c("CoxSnell: 0.05", "CoxSnell: 0.03", "CoxSnell: 0.02")
+McFadden <- c("McFadden: 0.05", "McFadden: 0.03", "McFadden: 0.02")
+beta <- c("beta: 0.1", "beta: 0.05")
+method <- c(Nagelkerke, CoxSnell, McFadden, beta)
+correction <- c("no", "age")
+parameters <- c("parameters_promis", "parameters_multigroup")
+country <- c("ger-arg", "usa-arg", "usa-ger", "usa-ger-arg")
+```
+
+## By wf_1_comparison
+
+```{r}
+all_specifications %>%
+    dplyr::group_by(wf_1_comparison) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -wf_1_comparison, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/(nrow(all_specifications)/4)*100)
+```
+
+In all analyses for ger-arg, 27.85% of items were flagged for dif
+```{r}
+all_specifications %>%
+    dplyr::group_by(wf_1_comparison) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -wf_1_comparison, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/nrow(all_specifications)*100) %>% 
+    dplyr::arrange(wf_1_comparison)  %>% 
+    dplyr::group_by(wf_1_comparison)%>% 
+    dplyr::summarise(sum = sum(sum)) %>% 
+    dplyr::mutate(percent_flagged = sum / (nrow(all_specifications)*35/4) *100)
+```
+much better denominator: in all analyses for wf_1_comparison = ger-arg, PFM1 was flagged 30.8 percent of the time
+```{r}
+nolr_specifications %>%
+    dplyr::group_by(wf_1_comparison) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -wf_1_comparison, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/(nrow(all_specifications)/4)*100)
+```
+
+In all analyses for ger-arg, 27.85% of items were flagged for dif
+```{r}
+nolr_specifications %>%
+    dplyr::group_by(wf_1_comparison) %>%
+    dplyr::summarise(across(contains("PF"), sum, .names = "{.col}")) %>%
+    pivot_longer(cols = -wf_1_comparison, names_to = "variable", values_to = "sum") %>% 
+    dplyr::mutate(percent = sum/nrow(all_specifications)*100) %>% 
+    dplyr::arrange(wf_1_comparison)  %>% 
+    dplyr::group_by(wf_1_comparison)%>% 
+    dplyr::summarise(sum = sum(sum)) %>% 
+    dplyr::mutate(percent_flagged = sum / (nrow(all_specifications)*35/4) *100)
+```
+
+
+### All Specifications
+```{r}
+result_wf1_all <- create_flagged_item_table(all_specifications, wf_1_comparison)
+result_wf1_all
+
+create_flagged_item_level_table(all_specifications, wf_1_comparison)
+```
+
+### Specifications without LR
+```{r}
+result_wf1_nolr <- create_flagged_item_table(nolr_specifications, wf_1_comparison)
+result_wf1_nolr
+
+create_flagged_item_level_table(nolr_specifications, wf_1_comparison)
+```
+
+### Double check with alternative process
+```{r}
+plotdata %>% 
+  filter(yvar %in% country) %>% 
+  group_by(yvar) %>% 
+  dplyr::summarise(times_flagged = sum(fill ==2))  %>% 
+  mutate(percent = times_flagged / (length(unique(plotdata$xvar)))*100)
+```
+
+### Text
+```{r}
+result_wf1 <- result_wf1_all
+```
+
+For the comparison between `r result_wf1$wf_1_comparison[1]`, `r round(result_wf1$percent_flagged[1], 1)`% of all items were flagged for DIF. 
+
+Comparing `r result_wf1$wf_1_comparison[2]`, we found that `r round(result_wf1$percent_flagged[2], 1)`% of the total items were indicated for DIF.
+
+When comparing `r result_wf1$wf_1_comparison[3]`, `r round(result_wf1$percent_flagged[3], 1)`% of all items were flagged for DIF.
+
+Comparing `r result_wf1$wf_1_comparison[4]`, it was noted that `r round(result_wf1$percent_flagged[4], 1)`% of the items were marked for DIF.
+
+<br>
+
+## By hf_1_parameter
+
+### All Specs
+```{r}
+result_hf_1_all <- create_flagged_item_table(all_specifications, hf_1_correction)
+result_hf_1_all
+```
+
+### No LR Specs
+```{r}
+result_hf_1_nolr <- create_flagged_item_table(nolr_specifications, hf_1_correction)
+result_hf_1_nolr
+```
+
+### Double check with alternative process
+```{r}
+plotdata %>% 
+  filter(yvar %in% correction) %>% 
+  group_by(yvar) %>% 
+  dplyr::summarise(times_flagged = sum(fill ==2)) %>%
+  mutate(percent = times_flagged / (length(unique(plotdata$xvar))) *100)
+```
+
+## By hf_2_parameter
+
+### All Specs
+```{r}
+result_hf_2_all <- create_flagged_item_table(all_specifications, hf_2_parameter_vector)
+result_hf_2_all
+```
+
+### No LR
+
+```{r}
+result_hf_2_nolr <- create_flagged_item_table(nolr_specifications, hf_2_parameter_vector)
+result_hf_2_nolr
+```
+#### Double check with alternative process
+```{r}
+plotdata %>% filter(yvar %in% parameters) %>% group_by(yvar) %>% dplyr::summarise(times_flagged = sum(fill ==2))  %>% 
+  mutate(percent = times_flagged / (length(unique(plotdata$xvar))) *100)
+```
+### Text
+
+```{r}
+result_hf_2 <- result_hf_2_nolr
+```
+
+When analyzing `r result_hf_2$hf_2_parameter_vector[1]`, it was observed that `r round(result_hf_2$percent_flagged[1], 1)`% of all items were flagged for DIF. When using `r result_hf_2$hf_2_parameter_vector[2]`, `r round(result_hf_2$percent_flagged[2], 1)`% of all items were detected to have DIF.
+
+
+## By hf_3_criterion
+
+### All Specs
+```{r}
+result_hf_3_all <- create_flagged_item_table(all_specifications, hf_3_criterion) 
+
+result_hf_3_percent_method_all <- result_hf_3_all %>% 
+  mutate(method = case_when(
+    str_detect(hf_3_criterion, "Cox") ~ "R2 Cox",
+    str_detect(hf_3_criterion, "McFadden") ~ "R2 McFadden",
+    str_detect(hf_3_criterion, "Nagelkerke") ~ "R2 Nagelkerke",
+    str_detect(hf_3_criterion, "beta") ~ "beta",
+    str_detect(hf_3_criterion, "lr") ~ "lr",
+    TRUE ~ "other" # This will assign "other" to rows where none of the above conditions are TRUE. You can adjust as needed.
+  )) %>% 
+  dplyr::group_by(method) %>% 
+  dplyr::summarise(sum = sum(sum)) %>% 
+  dplyr::mutate(percent_flagged = sum / (nrow(all_specifications)*35) *100) # nrow(specifications) analyses by 35 potential item flags
+result_hf_3_percent_method_all
+```
+
+### No LR
+```{r}
+result_hf_3_nolr <- create_flagged_item_table(nolr_specifications, hf_3_criterion) 
+
+result_hf_3_percent_method_nolr <- result_hf_3_nolr %>% 
+  mutate(method = case_when(
+    str_detect(hf_3_criterion, "Cox") ~ "R2 Cox",
+    str_detect(hf_3_criterion, "McFadden") ~ "R2 McFadden",
+    str_detect(hf_3_criterion, "Nagelkerke") ~ "R2 Nagelkerke",
+    str_detect(hf_3_criterion, "beta") ~ "beta",
+    str_detect(hf_3_criterion, "lr") ~ "lr",
+    TRUE ~ "other" # This will assign "other" to rows where none of the above conditions are TRUE. You can adjust as needed.
+  )) %>% 
+  dplyr::group_by(method) %>% 
+  dplyr::summarise(sum = sum(sum)) %>% 
+  dplyr::mutate(percent_flagged = sum / (nrow(nolr_specifications)*35) *100) # nrow(specifications) analyses by 35 potential item flags
+result_hf_3_percent_method_nolr
+```
+
+
+
+## Table All Specs
+
+```{r}
+colnames(result_wf1_all)[1] <- "id"
+colnames(result_hf_1_all)[1] <- "id"
+colnames(result_hf_2_all)[1] <- "id"
+colnames(result_hf_3_percent_method_all)[1] <- "id"
+
+table_all_specs <- bind_rows(
+  result_wf1_all,
+  result_hf_1_all,
+  result_hf_2_all,
+  result_hf_3_percent_method_all)
+```
+
+## Table No LR Specs
+```{r}
+colnames(result_wf1_nolr)[1] <- "id"
+colnames(result_hf_1_nolr)[1] <- "id"
+colnames(result_hf_2_nolr)[1] <- "id"
+colnames(result_hf_3_percent_method_nolr)[1] <- "id"
+
+table_nolr <- bind_rows(
+  result_wf1_nolr,
+  result_hf_1_nolr,
+  result_hf_2_nolr,
+  result_hf_3_percent_method_nolr)
+
+full_join(table_all_specs, table_nolr, by = "id") %>% 
+  mutate(percent_flagged.x = round(percent_flagged.x, 1),
+         percent_flagged.y = round(percent_flagged.y, 1),
+         ) %>% 
+  dplyr::select(Specification = id,
+         "Items Flagged" = sum.x,
+         "Flagged All Methods (%)" = percent_flagged.x,
+         "Flagged LR Excluded (%)" = percent_flagged.y) 
+  
+```
+
+
+# Figures: Amount of Flagged Items per DIF Analysis
+
+## Setup
+```{r}
+data_flagged_items <- all_specifications %>%
+  #filter(method != "lr") %>% 
+  rowwise() %>% 
+  dplyr::mutate(sum = sum(c_across(PFM1:PFM9))) %>%
+  ungroup() %>%  
+  mutate(
+    wf_1_comparison = toupper(wf_1_comparison), # Convert to uppercase
+    hf_1_correction = sapply(hf_1_correction, function(x) str_to_title(x)), # First letter uppercase for each word
+    hf_2_parameter = case_when(
+      hf_2_parameter == "parameters_promis" ~ "PROMIS",
+      hf_2_parameter == "parameters_multigroup" ~ "Multigroup",
+      TRUE ~ hf_2_parameter # Default case if there are other values
+    ),
+    hf_3_criterion = case_match(
+      hf_3_criterion,
+      "lr: 0.01"     ~ "LR: 0.01",
+      "lr: 0.05"     ~ "LR: 0.05",
+      "lr_bon: 0.01" ~ "LR Bonferroni: 0.01",
+      "lr_bon: 0.05" ~ "LR Bonferroni: 0.05",
+      "lr_ben: 0.01" ~ "LR BH: 0.01",
+      "lr_ben: 0.05" ~ "LR BH: 0.05",
+      .default =  hf_3_criterion # Default case if there are other values
+    )
+  )
+data_flagged_items$hf_3_criterion = factor(data_flagged_items$hf_3_criterion, 
+                                           levels = rev(c("CoxSnell: 0.02", 
+                                                          "CoxSnell: 0.03", 
+                                                          "CoxSnell: 0.05", 
+                                                          "McFadden: 0.02", 
+                                                          "McFadden: 0.03", 
+                                                          "McFadden: 0.05",
+                                                          "Nagelkerke: 0.02", 
+                                                          "Nagelkerke: 0.03", 
+                                                          "Nagelkerke: 0.05",
+                                                          "Nagelkerke", 
+                                                          "beta: 0.1",
+                                                          "beta: 0.05",
+                                                          "LR: 0.01",
+                                                          "LR: 0.05",
+                                                          "LR Bonferroni: 0.01",
+                                                          "LR Bonferroni: 0.05",
+                                                          "LR BH: 0.01",
+                                                          "LR BH: 0.05")))
+```
+
+## Histogram
+```{r}
+hist_flagged_items <- data_flagged_items %>% 
+  ggplot(aes(x = sum)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "#21918c") +
+  theme_minimal() +
+  labs(title = "Histogram: Amount of Flagged Items From Each DIF Analysis", 
+       x = "Number of Flagged Items per Analysis", 
+       y = "Frequency of Analyses")
+
+hist_flagged_items
+```
+
+## Distribution
+```{r}
+p1 <- data_flagged_items %>%
+  ggplot(aes(x = wf_1_comparison, y = sum, fill = wf_1_comparison)) +
+  geom_boxplot(alpha = 0.5) +
+    geom_jitter(alpha = 0.3) +
+  scale_fill_viridis_d() +
+  labs(title = "a) Specification: Country Comparison", x = "Country Comparison", y = "Number of Flagged Items") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_flip()
+
+p2 <- data_flagged_items %>%
+  ggplot(aes(x = hf_1_correction, y = sum, fill = hf_1_correction)) +
+  geom_boxplot(alpha = 0.5) +
+    geom_jitter(alpha = 0.3) +
+  scale_fill_viridis_d() +
+  labs(title = "b) Specification: Type of Correction", x = "Correction", y = "Number of Flagged Items") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_flip()
+
+p3 <- data_flagged_items %>%
+  ggplot(aes(x = hf_2_parameter, y = sum, fill = hf_2_parameter)) +
+  geom_boxplot(alpha = 0.5) +
+  geom_jitter(alpha = 0.3) +
+  scale_fill_viridis_d() +
+  labs(title = "c) Specification: Type of Item Parameters", x = "Item Parameters", y = "Number of Flagged Items") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_flip()
+
+p4 <- data_flagged_items %>%
+  ggplot(aes(x = hf_3_criterion, y = sum, fill = hf_3_criterion)) +
+  geom_boxplot(alpha = 0.5) +
+    geom_jitter(alpha = 0.3) +
+  scale_fill_viridis_d() +
+  labs(title = "d) Specification: DIF Flagging Criterion and Threshold", x = "Method", y = "Number of Flagged Items") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_flip()
+
+combined_plot123 <- plot_grid(p1, p2, p3, ncol = 1, align = 'v')
+
+combined_plot <- plot_grid(combined_plot123, p4, ncol = 2, align = 'v')
+
+print(combined_plot)
+```
+
+
+```{r}
+data_flagged_items %>%
+    filter(wf_1_comparison == "") %>% 
+    ggplot(aes(x = wf_1_comparison, y = sum, fill = wf_1_comparison)) +
+    geom_boxplot(alpha = 0.5) +
+    scale_fill_viridis_d() +
+    labs(title = "Specification: Country Comparison", x = "Country Comparison", y = "Number of Flagged Items") +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    coord_flip()
+```
+
+```{r}
+plot_filterd_multiverse <- function(variable, value) {
+  
+  p1 <- data_flagged_items %>%
+    filter({{variable}} == value) %>% 
+    ggplot(aes(x = wf_1_comparison, y = sum, fill = wf_1_comparison)) +
+    geom_boxplot(alpha = 0.5) +
+    scale_fill_viridis_d() +
+    labs(title = "Specification: Country Comparison", x = "Country Comparison", y = "Number of Flagged Items") +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    coord_flip()
+  
+  p2 <- data_flagged_items %>%
+    filter({{variable}} == value) %>% 
+    ggplot(aes(x = hf_1_correction, y = sum, fill = hf_1_correction)) +
+    geom_boxplot(alpha = 0.5) +
+    scale_fill_viridis_d() +
+    labs(title = "Specification: Type of Correction", x = "Correction", y = "Number of Flagged Items") +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    coord_flip()
+  
+  p3 <- data_flagged_items %>%
+    filter({{variable}} == value) %>% 
+    ggplot(aes(x = hf_2_parameter, y = sum, fill = hf_2_parameter)) +
+    geom_boxplot(alpha = 0.5) +
+    scale_fill_viridis_d() +
+    labs(title = "Specification: Type of Item Parameters", x = "Item Parameters", y = "Number of Flagged Items") +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    coord_flip()
+  
+  p4 <- data_flagged_items %>%
+    filter({{variable}} == value) %>% 
+    ggplot(aes(x = hf_3_criterion, y = sum, fill = hf_3_criterion)) +
+    geom_boxplot(alpha = 0.5) +
+    scale_fill_viridis_d() +
+    labs(title = "Specification: DIF Flagging Criterion and Threshold", x = "Method", y = "Number of Flagged Items") +
+    theme_minimal() +
+    theme(legend.position = "none") +
+    coord_flip()
+  
+  combined_plot123 <- plot_grid(p1, p2, p3, ncol = 1, align = 'v')
+  
+  combined_plot <- plot_grid(combined_plot123, p4, ncol = 2, align = 'v')
+  
+  print(combined_plot)
+  
+}
+```
+
+```{r}
+plot_filterd_multiverse(variable = wf_1_comparison, value = "USA-GER-ARG")
+plot_filterd_multiverse(wf_1_comparison, "GER-ARG")
+plot_filterd_multiverse(hf_1_correction, "Age")
+```
+

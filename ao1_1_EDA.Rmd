@@ -1,0 +1,558 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitle: "1. EDA und Basic Psychometric Investigation"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      cache = F,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      out.width = "100%",
+                      fig.width=6, 
+                      fig.height=7,
+                      fig.align = "center",
+                      dpi = 200)
+
+# Install and load correct package versions
+if(!require(pacman)) install.packages("pacman")
+pacman::p_install_version
+pacman::p_load(tidyverse,
+               officer,
+               flextable,
+               ggstatsplot,
+               mirt,
+               haven,
+               lordif,
+               readxl,
+               arsenal,
+               summarytools,
+               raincloudplots,
+               hrbrthemes,
+               janitor,
+               car,
+               lavaan,
+               semPlot,
+               psych,
+               nFactors,
+               finalfit, questionr,
+               MVN, tidyselect, psych, GPArotation,
+               mokken, qgraph, lavaan, MBESS,
+               ggridges, cowplot)
+options(scipen = 999)
+
+# Source functions
+source("R/helper-functions.R")
+```
+
+# Data Wrangling
+
+```{r}
+load("data/data_complete.rda") 
+
+str(data_complete)
+glimpse(data_complete)
+summary(data_complete)
+```
+
+<br>
+
+# Exploratory Data Analysis
+
+## Argentina 
+
+```{r}
+data_arg <- data_complete %>% 
+  dplyr::filter(country == "arg")
+
+print(dfSummary(data_arg, 
+                varnumbers   = FALSE, 
+                valid.col    = FALSE, 
+                graph.magnif = 0.76),
+      method = 'render')
+```
+
+<br>
+
+## Germany 
+
+```{r}
+data_ger <- data_complete %>% 
+  dplyr::filter(country == "ger")
+
+print(dfSummary(data_ger, 
+                varnumbers   = FALSE, 
+                valid.col    = FALSE, 
+                graph.magnif = 0.76),
+      method = 'render')
+```
+
+<br>
+
+## US
+
+```{r}
+data_usa <- data_complete %>% 
+  dplyr::filter(country == "usa")
+
+print(dfSummary(data_usa, 
+                varnumbers   = FALSE, 
+                valid.col    = FALSE, 
+                graph.magnif = 0.76),
+      method = 'render')
+```
+
+<br>
+
+## Argentina, Germany, US
+
+```{r results = 'asis'}
+print(dfSummary(data_complete, 
+                varnumbers   = FALSE, 
+                valid.col    = FALSE, 
+                graph.magnif = 0.76),
+      method = 'render')
+```
+
+<br>
+
+
+
+# Tables
+
+## Table 1: Sociodemographics
+
+```{r  results = "asis"}
+options(qwraps2_markup = 'markdown')
+
+summaryStructureSociodemographics <-
+  list("Age" =
+         list("min"       = ~ min(age, na.rm = TRUE),
+              "max"       = ~ max(age, na.rm = TRUE),
+              "mean (sd)" = ~ qwraps2::mean_sd(age, 
+                                               na_rm = TRUE, 
+                                               show_n = "never"),
+              "median" = ~  median(age, na.rm = TRUE)),
+       
+       "Sex, female" =
+         list(
+           "N (%)"  = ~ qwraps2::n_perc0(gender == 2, na_rm = TRUE)),
+       
+       "Education" =
+         list("Basic Education" = ~ qwraps2::n_perc0(edu_harmonized == "Basic Education",  na_rm = TRUE),
+              "Secondary Education"  = ~ qwraps2::n_perc0(edu_harmonized == "Secondary Education",  na_rm = TRUE),
+              "Vocational/Some College"  = ~ qwraps2::n_perc0(edu_harmonized == "Vocational/Some College",  na_rm = TRUE),
+              "Higher Education" = ~ qwraps2::n_perc0(edu_harmonized == "Higher Education",  na_rm = TRUE))
+       
+       # "Work status" no information for USA
+       
+       # Marital status " no information for USA
+  )
+```
+
+
+```{r  results = "asis"}
+dataComplete <- data_complete %>% 
+  mutate(country_table = dplyr::recode(country,  "usa" = "USA", "ger" = "Germany", "arg" = "Argentina"),
+         country_table1 = factor(country_table, levels = c("USA", "Germany", "Argentina")))
+
+summaryTableSociodemopgraphics <- qwraps2::summary_table(dplyr::group_by(dataComplete, country_table1), summaryStructureSociodemographics)
+
+print(summaryTableSociodemopgraphics, rtitle = "Sociodemographics")
+```
+
+<br>
+
+## Table 2: PROMIS
+```{r  results = "asis"}
+options(qwraps2_markup = 'markdown')
+
+summaryStructurePROMIS <-
+  list("PROMIS Physical Function T-Score" =
+         list("min"       = ~ round(min(t_promis, na.rm = TRUE),2),
+              "Floor (%)"  = ~ qwraps2::n_perc0(t_promis == min(t_promis), na_rm = TRUE),
+              "max"       = ~ round(max(t_promis, na.rm = TRUE),2),
+              "Ceiling (%)"  = ~ qwraps2::n_perc0(t_promis == max(t_promis), na_rm = TRUE),
+              "IQR"       = ~ round(IQR(t_promis, na.rm = TRUE),2),
+              "mean (sd)"  = ~ qwraps2::mean_sd(t_promis, 
+                                                na_rm = TRUE, 
+                                                show_n = "never"),
+              "median" = ~  round(median(t_promis, na.rm = TRUE),2)
+         ),
+       "PROMIS Global Health - Physical Health" =
+         list(#"min"       = ~ min(GLOBAL03, na.rm = TRUE),
+           #"max"       = ~ max(GLOBAL03, na.rm = TRUE),
+           #"IQR"       = ~ IQR(GLOBAL03, na.rm = TRUE),
+           "mean (sd)"  = ~ qwraps2::mean_sd(global_health_physical_2a_t_score, 
+                                             na_rm = TRUE, 
+                                             show_n = "never"),
+           "median" = ~  median(global_health_physical_2a_t_score, na.rm = TRUE)
+         ), 
+       "PROMIS Global Health - Mental Health" =
+         list(#"min"       = ~ min(GLOBAL04, na.rm = TRUE),
+           #"max"       = ~ max(GLOBAL04, na.rm = TRUE),
+           #"IQR"       = ~ IQR(GLOBAL04, na.rm = TRUE),
+           "mean (sd)"  = ~ qwraps2::mean_sd(global_health_mental_2a_t_score, 
+                                             na_rm = TRUE, 
+                                             show_n = "never"),
+           "median" = ~  median(global_health_mental_2a_t_score, na.rm = TRUE)
+         )#,
+  )
+
+
+summaryTable <- qwraps2::summary_table(dplyr::group_by(dataComplete, country_table1), summaryStructurePROMIS)
+
+print(summaryTable, rtitle = "PROMIS Summary Statistics")
+```
+
+
+# Demographics
+```{r}
+#### Demographics, score distribution, and missing data frequency ####
+
+# Dataset dimensions
+dim(data_complete)
+```
+
+## Age
+```{r}
+data_complete %>%
+  dplyr::select(age, country) %>%
+  dplyr::group_by(country) %>%
+  dplyr::summarize(
+    mean_age = mean(age, na.rm = TRUE),
+    median_age = median(age, na.rm = TRUE),
+    min_age = min(age, na.rm = TRUE),
+    max_age = max(age, na.rm = TRUE),
+    n = n()  # Count of observations per group
+  )
+```
+
+
+```{r}
+data_complete %>% filter(age <= 69) %>%
+  dplyr::select(age, country) %>%
+  dplyr::group_by(country) %>%
+  dplyr::summarize(
+    mean_age = mean(age, na.rm = TRUE),
+    median_age = median(age, na.rm = TRUE),
+    min_age = min(age, na.rm = TRUE),
+    max_age = max(age, na.rm = TRUE),
+    n = n()  # Count of observations per group
+  )
+```
+
+
+```{r}
+ggplot(data_complete, aes(x = country, y = age, fill = country)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Age Distribution by Country", x = "Country", y = "Age") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+```
+
+## Gender
+```{r}
+data_complete %>%
+  dplyr::select(gender, country) %>%
+  dplyr::group_by(country) %>%
+  dplyr::summarize(
+    female_percent = mean(gender-1, na.rm = TRUE) *100,
+    n = n()  # Count of observations per group
+  )
+
+histo(data_complete, "gender")
+```
+
+## Country
+```{r}
+table(data_complete$country)
+histo(data_complete, "country")
+```
+
+
+## Education
+```{r}
+table(data_complete$edu_harmonized)
+
+histo(data_complete, "edu_harmonized")
+```
+
+## Employment
+```{r}
+summary(data_complete$employment)
+table(data_complete$employment)
+histo(data_complete, "employment")
+```
+
+## work_hrs
+
+```{r}
+summary(data_complete$work_hrs)
+table(data_complete$work_hrs)
+histo(data_complete, "work_hrs")
+```
+
+## household_size_t1
+
+```{r}
+table(data_complete$household_size_t1)
+histo(data_complete, "household_size_t1")
+```
+
+## household_size_t2
+```{r}
+table(data_complete$household_size_t2)
+histo(data_complete, "household_size_t2")
+```
+
+## GL03-06
+```{r}
+summary(data_complete$GL03)
+table(data_complete$GL03)
+histo(data_complete, "GL03")
+
+# GL04
+table(data_complete$GL04)
+histo(data_complete, "GL04")
+
+# GL05
+table(data_complete$GL05)
+histo(data_complete, "GL05")
+
+# GL06
+table(data_complete$GL06)
+histo(data_complete, "GL06")
+```
+
+<br>
+
+# Inspect T-Scores and Item Responses
+
+## Figure T-score distribution and item responses
+```{r}
+grouping_vector <- c("usa", "ger", "arg")
+items <- filter_items(data_complete, 
+                      countries = grouping_vector)
+
+data_viz <- data_complete %>% 
+  mutate(country = case_match(country,
+                              "arg" ~ "Argentina", 
+                              "usa" ~ "USA", 
+                              "ger" ~ "Germany")) %>% 
+  dplyr::select(
+    country,
+    country_vector,
+    age,
+    names(items),
+    t_promis)
+
+data_viz_long <- data_viz %>% 
+  pivot_longer(cols = PFM1:PFM53,
+               names_to = "item")
+```
+
+### Item Response Plot
+```{r}
+item_responses <- data_viz_long %>% 
+  ggplot(
+    
+    aes(x=factor(item,
+                 levels = rev(c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+                                "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+                                "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+                                "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+                                "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53"))))) +
+  geom_bar(aes(fill=rev(as.factor(value))), position="fill") +
+  
+  scale_y_continuous(expand=expansion(0), labels=scales::percent_format()) +
+  labs(
+    title='Item Responses', 
+    subtitle='PROMIS Physical Functioning',
+    x='Items', 
+    y='% Responses'
+  ) +
+  scale_fill_brewer(name = "", 
+                    labels = c("Unable", 
+                               "Much Difficulty", 
+                               "Some Difficulty", 
+                               "Little Difficulty",
+                               "No Difficulty"),
+                    palette='Spectral', 
+                    direction=1) +
+  theme_classic()+
+  theme(legend.position='top') + 
+  guides(fill = guide_legend(reverse=TRUE)) +
+  facet_wrap(~country) + 
+  coord_flip() +
+  theme(
+    # This is the new default font in the plot
+    text = element_text(
+      #family = "Arial", 
+      size = 8, color = "black"),
+    plot.title = element_text(
+      #family = "Arial", 
+      size = 15,
+      face = "bold",
+      color = "#2a475e"
+    ),
+    # Statistical annotations below the main title
+    plot.subtitle = element_text(
+      #family = "Arial", 
+      size = 10, 
+      face = "bold",
+      color="#1b2838"
+    ),
+    plot.title.position = "plot", # slightly different from default
+    axis.text = element_text(size = 10, color = "black"),
+    axis.title = element_text(size = 12)
+  ) +
+  theme(
+    axis.ticks = element_blank(),
+    axis.line = element_line(colour = "grey50"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dashed")
+  )
+```
+
+### Distribution of T-Scores
+```{r}
+
+# Calculate median for each country
+medians <- data_viz %>%
+  group_by(country) %>%
+  dplyr::summarize(median_t_promis = median(t_promis)) 
+
+# Initialize an empty data frame to store density at medians
+density_at_medians <- data.frame(country = character(), median_t_promis = numeric(), density = numeric())
+
+# Calculate the density at these median points for each country
+for (country_name in unique(data_viz$country)) {
+  data_country <- data_viz[data_viz$country == country_name, ]
+  density_obj <- density(data_country$t_promis)
+  
+  median_val <- medians$median_t_promis[medians$country == country_name]
+  median_density <- approx(density_obj$x, density_obj$y, xout = median_val)$y
+  
+  density_at_medians <- rbind(density_at_medians, data.frame(country = country_name, median_t_promis = median_val, density = median_density))
+}
+# Find the range of your data
+data_range <- range(data_viz$t_promis, na.rm = TRUE)
+
+# Plotting
+distribution_plot <- data_viz %>%
+  ggplot(aes(x = t_promis, group = country)) +
+  geom_density(aes(color = country, linetype = country), alpha = 0.6, adjust = 1) +  # adjust parameter controls smoothness
+  geom_segment(data = density_at_medians, aes(x = median_t_promis, xend = median_t_promis, y = 0, yend = density, color = country), linetype = "dashed") +
+  scale_color_manual(values = c("USA" = "black", "Argentina" = "green", "Germany" = "red")) +
+  scale_linetype_manual(values = c("USA" = "solid", "Argentina" = "dotted", "Germany" = "dashed")) +
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80), limits = c(data_range[1] - 10, data_range[2] + 10)) +  # Extend the x-axis limits
+  labs(
+    x = 'T-scores',
+    y = 'Density',
+    title = 'Distribution of PROMIS Physical Function T-Scores',
+    color = "Country",
+    linetype = "Country"
+  ) +
+  guides(
+    #linetype = guide_legend(title = NULL)  # Uncomment this to remove linetype legend title
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = c(.999, .999),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),
+    legend.box.background = element_blank(),
+    legend.box.margin = margin(0, 0, 0, 0)
+  )
+```
+
+
+```{r}
+ggstatsplot::ggbetweenstats(
+  data = data_viz,
+  x = country,
+  y = t_promis,
+  p.adjust.method = "bonferroni",
+  pairwise.display = "all",
+  type = "nonparametric"
+) 
+```
+
+
+### Distribution of T-Scores including stats
+```{r}
+plot_t_scores <-  ggstatsplot::ggbetweenstats(
+  data = data_viz,
+  x = country,
+  y = t_promis,
+  p.adjust.method = "bonferroni",
+  pairwise.display = "all",
+  type = "nonparametric"
+) + 
+  # Add labels and title
+  labs(
+    x = "Country",
+    y = "PROMIS Ceiling Physical Function Items",
+    title = "Distribution of PROMIS Ceiling Physical Function T-Scores"
+  ) + 
+  # Customizations
+  theme(
+    # This is the new default font in the plot
+    text = element_text(family = "Roboto", size = 8, color = "black"),
+    plot.title = element_text(
+      family = "Roboto", 
+      size = 15,
+      face = "bold",
+      color = "#2a475e"
+    ),
+    # Statistical annotations below the main title
+    plot.subtitle = element_text(
+      family = "Roboto", 
+      size = 10, 
+      face = "bold",
+      color="#1b2838"
+    ),
+    plot.title.position = "plot", # slightly different from default
+    axis.text = element_text(size = 10, color = "black"),
+    axis.title = element_text(size = 12)
+  ) +
+  theme(
+    axis.ticks = element_blank(),
+    axis.line = element_line(colour = "grey50"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(linetype = "dashed")
+  )
+
+plot_t_scores
+```
+
+### Combine plots
+```{r}
+plot_item_responses <- cowplot::plot_grid(plot_t_scores, item_responses, ncol = 1)
+plot_item_responses
+```
+

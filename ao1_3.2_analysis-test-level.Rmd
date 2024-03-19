@@ -1,0 +1,1009 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitile: "3.2. Analysis the DIF Multiverse: Test Level"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      lwd = 2,
+                      out.width = "100%",
+                      fig.width=10, 
+                      fig.height=10,
+                      fig.align = "center",
+                      dpi = 300)
+
+library(haven)
+library(lordif)
+library(readxl)
+library(arsenal) 
+library(summarytools) 
+library(hrbrthemes)
+library(cowplot)
+library(janitor)
+library(car)
+library(lavaan)
+library(semPlot)
+library(psych)
+library(nFactors)
+library(kableExtra)
+library(doParallel)
+library(gpttools)
+library(plyr)
+library(reshape)
+library(mirt)
+library(mirtCAT)
+library(rms)
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(pander)
+library(raincloudplots)
+library(dplyr)
+library(tidyverse)
+library(corrplot)
+
+options(scipen = 999)
+```
+
+# Overview
+
+We are interested in the impact different DIF-flagging scenarios have on the test level. That means, how would removing the DIF items impact the drawn conclusions, item parameters, ICC, etc.
+
+For this, we compare the:
+- Baseline model = same item parameters are assumed across all 3 countries.
+- Corrected model = flagged items use country specific parameters.
+- Purified model = flagged items are removed.
+
+These models were created in the previous document based on the follwowing workflow:
+
+## Workflow `multiverseDIF()`
+
+1.  Estimate Baseline Models 
+a. with PROMIS US Parameters
+b. with mirt::multigroup() based on data (similar to lordif)
+
+2.  Iterative Ordinal Logistic Regression DIF assessment
+- Goal: identify items with DIF
+- similar to lordif
+- calulate values for various criteria (R2,β-change, Likelihood-Ratio Test)
+
+3.  Estimate Corrected Models 
+These models have been "corrected" for DIF (using either item parameters of DIF items reestimated in country samples, or US Baseline sample)
+
+4.  Comparison of Baseline and corrected models
+- item parameter
+- expected scores
+- theta distribution
+
+<br>
+
+# 1. Setup
+
+## Data for analyses
+
+Load and prepare item parameters
+
+```{r}
+load("data/results.RData") # original data used in publication
+specifications_results <- read.csv("data/specification_results.csv") # original data used in publication
+```
+
+# Compare thetas from baseline vs corrected vs purified model
+
+## Save differences in Sum Squared Theta Differences in specification_results
+```{r}
+# Initialize an empty list to store results
+theta_diff_results <- list()
+
+for (i in 1:length(out)) {
+  
+  # Calculate the difference between theta_corrected and theta_baseline
+  theta_diff_baseline_corrected <- out[[i]]$theta_baseline - out[[i]]$theta_corrected
+  
+  # Calculate the sum of Squared differences
+  theta_diff_baseline_corrected_ss <- sum(theta_diff_baseline_corrected^2)
+  
+  # Calculate the difference between theta_corrected and theta_baseline
+  theta_diff_baseline_purified <- out[[i]]$theta_baseline - out[[i]]$theta_purified 
+  
+  # Calculate the sum of Squared differences
+  theta_diff_baseline_purified_ss <- sum(theta_diff_baseline_purified^2)
+  
+  
+  # Append the result to the list
+  theta_diff_results[[i]] <- data.frame(i = i, 
+                                        theta_diff_baseline_corrected_ss = theta_diff_baseline_corrected_ss,
+                                        theta_diff_baseline_purified_ss = theta_diff_baseline_purified_ss
+  )
+}
+
+# Combine the results and bind them to specifications_results
+specifications_results2 <- cbind(specifications_results, do.call(rbind, theta_diff_results)) %>% relocate(k_flagged, .after = theta_diff_baseline_purified_ss) %>% dplyr::select(-X)
+
+```
+
+
+
+
+
+```{r}
+# View the first few rows of the dataframe
+theta_top_10_differences_corrected <-   specifications_results2 %>%
+  arrange(desc(theta_diff_baseline_corrected_ss)) %>% #TODO effect size for x axis
+  head(10) %>% 
+  pull(i)
+
+# View the first few rows of the dataframe
+theta_top_10_differences_purified <-   specifications_results2 %>%
+  arrange(desc(theta_diff_baseline_purified_ss)) %>% 
+  head(10) %>% 
+  pull(i)
+```
+
+
+
+
+```{r}
+specifications_results2 %>% slice(theta_top_10_differences_purified)
+```
+
+
+- `baseline`: baseline model either based on PROMIS or multigroup parameters
+- `corrected`: is a MIRT model, where item parameters are estimated freely for flagged items (should be IRT_model, is it?)
+- `purified`: model with flagged items removed
+
+## Setup
+
+### Selecting important specifications
+
+```{r}
+specifications_results %>% 
+  dplyr::mutate(row = dplyr::row_number()) %>% 
+  filter(
+    wf_1_comparison == "usa-ger-arg" & 
+      hf_1_correction == "age"& 
+      hf_2_parameter_vector == "parameters_multigroup",
+    str_detect(hf_3_criterion, "Cox"))
+
+```
+
+```{r}
+specification_finder <- function(removed_items, 
+                                 wf_1_comparison,
+                                 hf_1_correction,
+                                 hf_2_parameter_vector,
+                                 hf_3_criterion,
+                                 hf_4_threshold
+) {
+  indices <- numeric()
+  
+  # Loop over each element in the 'out' list
+  for(i in seq_along(out)) {
+    # Extract flagged_items
+    flagged_items <- out[[i]]$analysis_results$`last iteration`$Flagged_items
+    flagged_items_sort <- sort(flagged_items)  # Sort to make sure the order is the same
+    
+    # Check if 'flagged_items' contains only "PFM16", "PFM33", "PFM46"
+    contains_only_flagged_items <- identical(flagged_items_sort, removed_items)
+    # Check if "usa-ger-arg" is in 'wf_1_comparison' of 'specification'
+    contains_wf_1_comparison <- wf_1_comparison %in% out[[i]]$specification$wf_1_comparison
+    
+    contains_hf_1_correction <- hf_1_correction %in% out[[i]]$specification$hf_1_correction
+    
+    contains_hf_2_parameter_vector <- hf_2_parameter_vector %in% out[[i]]$specification$hf_2_parameter_vector
+    
+    contains_hf_3_criterion <- hf_3_criterion %in% out[[i]]$specification$hf_3_criterion
+    
+    contains_hf_4_threshold <- hf_4_threshold %in% out[[i]]$specification$hf_4_threshold
+    
+    # If both conditions are met, store the index
+    if(contains_only_flagged_items && contains_wf_1_comparison && 
+       contains_hf_1_correction && contains_hf_2_parameter_vector &&
+       contains_hf_3_criterion && contains_hf_4_threshold) {
+      indices <- c(indices, i)
+      
+    }
+  }
+  return(indices) 
+}
+```
+
+"PFM15" "PFM16" "PFM33" "PFM46" "PFM51"
+
+```{r}
+spec_promis <- specification_finder(removed_items = c( "PFM16", "PFM33", "PFM46", "PFM51"), 
+                                    wf_1_comparison = "usa-ger-arg",
+                                    hf_1_correction = "no",
+                                    hf_2_parameter_vector = "parameters_promis",
+                                    hf_3_criterion = "CoxSnell",
+                                    hf_4_threshold = 0.02)
+
+title_spec_promis <- paste(out[[spec_promis]]$specification %>%
+                             with(paste0("Comparison: ", toupper(wf_1_comparison), "; Parameters: PROMIS")), 
+                           "; Flagged Items:", paste0(out[[spec_promis]]$analysis_results$`last iteration`$Flagged_items, collapse = ", "))
+title_spec_promis
+```
+
+
+```{r}
+specification_finder2 <- function(removed_items
+) {
+  indices <- numeric()
+  
+  # Loop over each element in the 'out' list
+  for(i in seq_along(out)) {
+    # Extract flagged_items
+    flagged_items <- out[[i]]$analysis_results$`last iteration`$Flagged_items
+    flagged_items_sort <- sort(flagged_items)  # Sort to make sure the order is the same
+    contains_only_flagged_items <- identical(flagged_items_sort, removed_items)
+    
+    if (contains_only_flagged_items == TRUE) {
+      indices <- c(indices, i)
+    }
+    
+    
+  }
+  return(indices) 
+}
+
+specs_numbers <- specification_finder2(removed_items = c("PFM16", "PFM33", "PFM46", "PFM51"))
+```
+```{r}
+specifications_results[specs_numbers,]
+```
+
+
+Contains the flagging criteria used for the analysis
+```{r}
+out[[spec_promis]]$analysis_results$`last iteration`$Criteria
+```
+
+
+## Estimate Models
+
+```{r}
+t_baseline <- out[[spec_promis]]$theta_baseline * 10 + 50
+t_corrected <- out[[spec_promis]]$theta_corrected * 10 + 50
+t_purified <- out[[spec_promis]]$theta_purified * 10 + 50
+```
+
+
+### Correlation
+```{r}
+base_corr_puri <- tibble(
+  t_baseline,
+  t_corrected,
+  t_purified
+)
+
+rating_cor <- cor(base_corr_puri,
+                  method = "pearson")
+
+corrplot(rating_cor, 
+         type = "upper", 
+         order = "hclust", 
+         method = 'number',
+         addCoef.col = 'black', 
+         tl.col = "black", 
+         tl.srt = 45)
+```
+
+
+# Bland Altman Plot
+
+## plot_bland_altman()
+
+Takes the specification and creates bland altman plots to show the difference between thetas for various comparisons:
+
+- baseline vs corrected model
+- baseline vs purified model
+- corrected vs purified model
+
+```{r}
+plot_bland_altman <- function(specification_number, comparison) {
+  
+  title <- paste0("Flagged DIF Items: ", paste0(out[[specification_number]]$analysis_results$`last iteration`$Flagged_items, collapse = ", "))
+  
+  # theta for constrained = baseline
+  t_baseline <- out[[specification_number]]$theta_baseline * 10 + 50
+  
+  # theta for corrected model
+  t_corrected <- out[[specification_number]]$theta_corrected * 10 + 50
+  
+  # theta for purified model
+  t_purified <- out[[specification_number]]$theta_purified * 10 + 50
+  
+  
+  
+  # calculate the mean and standard deviation of the differences
+  if (comparison == "baseline-purified") { # compares baseline model (equal item parameters across countries) with purified model = without DIF items
+    
+    title1 = "Bland-Altman Plot: Baseline vs Purified Model"
+    
+    # create a data frame with the two variables to compare
+    df <- data.frame(method1 = as.numeric(t_baseline), 
+                     method2 = as.numeric(t_purified)) %>% 
+      mutate(
+        diff = method1 - method2, 
+        mean_methods = (method1 + method2) / 2, 
+        Country = dplyr::recode(out[[specification_number]]$analysis_results$`last iteration`$DIF_model$data$country,
+                                "arg" = "Argentina", 
+                                "ger" = "Germany", 
+                                "usa" = "USA"))
+    
+    # create a Bland-Altman plot using ggplot2
+    
+  } else if (comparison == "baseline-corrected") { # compares baseline model (equal item parameters across countries) with corrected model = freely estimated parameters for flagged items
+    title1 = "Bland-Altman Plot: Baseline vs Corrected Model"
+    
+    # create a data frame with the two variables to compare
+    df <- data.frame(method1 = as.numeric(t_baseline), 
+                     method2 = as.numeric(t_corrected)) %>% 
+      mutate(
+        diff = method1 - method2, 
+        mean_methods = (method1 + method2) / 2, 
+        Country = dplyr::recode(out[[specification_number]]$analysis_results$`last iteration`$DIF_model$data$country,
+                                "arg" = "Argentina", 
+                                "ger" = "Germany", 
+                                "usa" = "USA"))
+    
+  } else if (comparison == "corrected-purified") { # compares purified model = without DIF items with corrected model = freely estimated parameters for flagged items
+    title1 = "Bland-Altman Plot: Corrected vs Purified Model"
+    
+    # create a data frame with the two variables to compare
+    df <- data.frame(method1 = as.numeric(t_corrected), 
+                     method2 = as.numeric(t_purified)) %>% 
+      mutate(
+        diff = method1 - method2, 
+        mean_methods = (method1 + method2) / 2, 
+        Country = dplyr::recode(out[[specification_number]]$analysis_results$`last iteration`$DIF_model$data$country,
+                                "arg" = "Argentina", 
+                                "ger" = "Germany", 
+                                "usa" = "USA"))
+    
+  }
+  
+  
+  mean_diff <- mean(df$diff)
+  sd_diff <- sd(df$diff)
+  
+  # Define colors for each group
+  group_colors <- c("USA" = "black", "Germany" = "orange", "Argentina" = "purple")
+  
+  
+  bland_altman <- ggplot(df, aes(x = mean_methods, 
+                                 y = diff, 
+                                 color = Country)) +
+    geom_point(shape = 1) +
+    scale_color_manual(values = group_colors) +
+    geom_hline(yintercept = mean_diff, 
+               linetype = "dashed", 
+               color = "black", size = 1.4) +
+    geom_label(aes(label = paste0("Mean: ", sprintf("%.2f", mean_diff)), 
+                   x = 30, 
+                   y = mean_diff + mean_diff *1), # add 25% of diff for spacing
+               hjust = 1, vjust = 0, color = "black") +
+    
+    
+    geom_hline(yintercept = mean_diff + 1.96 * sd_diff, 
+               linetype = "dashed", 
+               color = "blue", size = 1.4 ) +
+    geom_label(aes(label = paste0("+1.96SD: ", sprintf("%.2f", (mean_diff + 1.96 * sd_diff))), 
+                   x = 30, 
+                   y = mean_diff + 1.96 * sd_diff + (mean_diff + 1.96 * sd_diff)*.1),  # add 10% of diff for spacing
+               hjust = 1, vjust = 0, color = "blue") +
+    
+    geom_hline(yintercept = mean_diff - 1.96 * sd_diff, 
+               linetype = "dashed", 
+               color = "blue", size = 1.4) +
+    
+    geom_label(aes(label = paste0("-1.96SD: ", sprintf("%.2f", (mean_diff - 1.96 * sd_diff))), 
+                   x = 30, 
+                   y = mean_diff - 1.96 * sd_diff + (mean_diff - 1.96 * sd_diff)*.1), 
+               hjust = 1, vjust = 0, color = "blue") +
+    
+    labs(x = "Average of both T-Scores", y = "Difference between T-Scores", 
+         title = title1,
+         subtitle = title, 
+         size = 1) +
+    theme_bw() +
+    #scale_colour_brewer(palette = "Dark2") +
+    #scale_fill_brewer(palette = "Dark2") +
+    scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80),
+                       limits = c(20, 80)) +
+    scale_y_continuous(breaks = c(-2, -1, 0, 1, 2))
+  bland_altman
+}
+```
+
+
+### Comparing Baseline with Corrected Model
+
+Very minor differences between thetas, when the baseline model (constrained item parameters for all groups) vs corrected model (flagged item paremeters estimated freely).
+
+```{r}
+bland_altman_baseline_corrected <- plot_bland_altman(spec_promis, comparison = "baseline-corrected")
+
+bland_altman_baseline_corrected
+```
+
+
+### Comparing Baseline with Purified Model
+
+When comparing the Baseline model with the purified model, we observe large differences, especially for Argentina. For thetas at -2, we find large positive deviations and for thetas at+2 large negative deviations Theta
+```{r}
+bland_altman_baseline_purified <- plot_bland_altman(spec_promis, comparison = "baseline-purified")
+
+bland_altman_baseline_purified
+```
+
+### Comparing Corrected with Purified Model
+
+When comparing the Baseline model with the purified model, we observe large differences, especially for Argentina. For thetas at -2, we find large positive deviations and for thetas at+2 large negative deviations Theta
+```{r}
+bland_altman_corrected_purified <- plot_bland_altman(spec_promis, comparison = "corrected-purified")
+
+bland_altman_corrected_purified
+```
+
+```{r}
+cowplot::plot_grid(bland_altman_baseline_corrected, 
+                   bland_altman_baseline_purified,
+                   bland_altman_corrected_purified,
+                   ncol = 1, align = "v") 
+```
+
+# Test Information Function (TIF) Plots
+
+
+```{r}
+load("data/data_complete.Rda")
+```
+
+```{r}
+# Define a range of theta values
+thetas <- seq(-4, 4, by = 0.1)
+t_scores <- thetas * 10+50
+group <- factor(data_complete$country, 
+                levels = c("usa", "ger", "arg")) # usa should always be reference
+
+#get t scores and model for baseline
+t_baseline <- out[[spec_promis]]$theta_baseline * 10 + 50
+baseline_model <- out[[spec_promis]]$results_baseline$model
+
+#get t scores and model for corrected model
+t_corrected <- out[[spec_promis]]$theta_corrected * 10 + 50
+corrected_model <- out[[spec_promis]]$analysis_results$`last iteration`$corrected_model$model
+
+# Prepare the data
+data_list <- lapply(c("usa", "ger", "arg"), function(g) {
+  data.frame(
+    theta = thetas,
+    test_info_baseline = testinfo(baseline_model, thetas, group = g),
+    test_info_corrected = testinfo(corrected_model, thetas, group = g),
+    
+    group = g
+  )
+})
+
+data <- dplyr::bind_rows(data_list)
+
+# Define colors for each group
+colors <- c(usa = "black", ger = "orange", arg = "purple", Baseline = "blue")
+
+# Plot using ggplot2
+tif_plot_overlapped <- data %>% 
+  mutate(t = theta * 10+50,
+         group = case_match(group,
+                            "usa" ~ "USA",
+                            "ger" ~ "Germany",
+                            "arg" ~ "Argentina")) %>% 
+  ggplot() +
+  geom_line(aes(x = t, y = test_info_corrected, color = group), linetype = "dashed", size = .5, alpha = .6) +
+  geom_line(aes(x = t, y = test_info_baseline, color = group), size = .5, alpha =.6, color = "black") +
+  scale_color_manual(values = colors) +
+  labs(x = 'T-scores', 
+       y = 'Test Information', 
+       title = 'Test Information Curves for Each Group', 
+       color = 'Group') +
+  theme_classic() +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2") + 
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),  # black border, no fill
+    panel.background = element_blank(),  # remove panel background
+    axis.line = element_line(color = "black"),  # add axis lines
+    legend.position = c(0.95, 0.95),  # position the legend inside the plot area
+    legend.justification = c("right", "top"),  # anchor the legend at its top-right corner
+    legend.background = element_blank(),  # remove legend background
+    legend.box.background = element_blank(),  # remove legend box background
+    legend.box.margin = margin(0, 0, 0, 0)  # remove margin around the legend box
+  )
+
+tif_plot_overlapped
+```
+
+<br>
+
+## Facet Wrapped for each country
+```{r}
+# Define colors for each group
+group_colors <- c("USA" = "black", "Germany" = "orange", "Argentina" = "purple", "Baseline" = "blue")
+
+data_long <- data %>%
+  pivot_longer(
+    cols = c(test_info_baseline, test_info_corrected),
+    names_to = "model_type",
+    values_to = "test_info"
+  ) %>%
+  mutate(
+    t = theta * 10 + 50,
+    group = case_match(group,
+                       "usa" ~ "USA",
+                       "ger" ~ "Germany",
+                       "arg" ~ "Argentina"),
+    model_type = case_match(model_type,
+                            "test_info_baseline" ~ "Baseline",
+                            "test_info_corrected" ~ "Corrected"),
+    unique_id = if_else(model_type == "Baseline", "Baseline", paste(group, model_type, sep = " "))
+  ) 
+```
+
+
+```{r}
+# Sample colors from the Viridis palette for the unique IDs excluding 'Baseline'
+unique_ids <- unique(data_long$unique_id)
+num_unique_ids <- length(unique_ids) - 1  # excluding 'Baseline'
+selected_colors <- group_colors
+
+# Set the names of your selected colors to match the unique IDs (excluding 'Baseline')
+viridis_colors <- setNames(group_colors, unique_ids[unique_ids != "Baseline"])
+
+# Create a custom color vector, adding 'black' for 'Baseline'
+line_colors <- c("Baseline" = "blue", viridis_colors)
+
+# Plot using ggplot2
+tif_plot <- ggplot(data_long, aes(x = t, y = test_info, color = unique_id)) +
+  geom_line(aes(linetype = model_type), size = .5, alpha = 0.7) +
+  scale_color_manual(values = line_colors) +
+  scale_linetype_manual(values = c("Baseline" = "solid", "Corrected" = "dashed")) +
+  labs(
+    x = 'T-scores', 
+    y = 'Test Information', 
+    title = 'Test Information Function Curves for Each Country/Model Combination',
+    color = "Country/Model"
+  ) +
+  guides(
+    linetype = FALSE  # Remove linetype legend title
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),  # black border, no fill
+    panel.background = element_blank(),  # remove panel background
+    axis.line = element_line(color = "black"),  # add axis lines
+    legend.position = c(.999, .999),  # position the legend inside the plot area
+    legend.justification = c("right", "top"),  # anchor the legend at its top-right corner
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),  # add a box around the legend with black border
+    legend.box.background = element_blank(),  # remove legend box background
+    legend.box.margin = margin(0, 0, 0, 0)  # remove margin around the legend box
+  )
+
+tif_plot
+```
+
+<br>
+
+# Test Characteristic Curve (TCC) Plots
+
+```{r}
+# Create data with theta estimates
+data_thetas_ets <- data_complete %>% mutate(
+  t_baseline = fscores(baseline_model)*10+50,
+  t_corrected = fscores(corrected_model)*10+50,
+  ets_baseline = mirt::expected.test(baseline_model, 
+                                     Theta = fscores(baseline_model),
+                                     group = 1),
+  ets_corrected = mirt::expected.test(corrected_model, 
+                                      Theta = fscores(corrected_model), 
+                                      group = 1) 
+  
+) %>% 
+  rowwise() %>% 
+  dplyr::mutate(sum_score = sum(c_across(PFM1:PFM53))) %>% 
+  ungroup()   %>% 
+  pivot_longer(cols = c(ets_baseline, ets_corrected),
+               names_to = "ets_type",
+               values_to = "ets")   %>% 
+  pivot_longer(cols = c(t_baseline, t_corrected),
+               names_to = "t_type",
+               values_to = "t") %>%    
+  relocate(sum_score, 
+           t_type, 
+           t,
+           ets_type,
+           ets
+  ) %>% 
+  filter(ets_type =="ets_baseline" & t_type == "t_baseline" |
+           ets_type =="ets_corrected" & t_type == "t_corrected"  ) %>% 
+  mutate(group = ifelse(ets_type =="ets_baseline", "baseline", "corrected"),
+         `Model Type` = ifelse(t_type =="t_baseline", "baseline", "corrected"),
+         country = case_match(country,
+                            "usa" ~ "USA",
+                            "ger" ~ "Germany",
+                            "arg" ~ "Argentina")
+  )
+
+
+tcc_plot <- data_thetas_ets %>%
+  ggplot(aes(x = t,
+             y = ets, 
+             color = `Model Type`)) +
+  geom_line(aes(linetype = `Model Type`), 
+            size = 1, 
+            alpha = .5) +  # Thicker lines
+  scale_linetype_manual(values = c("solid", "solid")) +  # Different line types
+  theme_minimal() +
+  labs(
+    x = 'T-scores', 
+    y = 'Expected Test Score', 
+    title = 'Test Characteristic Curves for Each Country/Model Combination'
+  ) +
+  scale_colour_brewer(palette = "Dark2") +
+  facet_wrap(~country) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),  # black border, no fill
+    panel.background = element_blank(),  # remove panel background
+    axis.line = element_line(color = "black"),  # add axis lines
+    # legend.position = c(.999, .999),  # position the legend inside the plot area
+    legend.justification = c("right", "top"),  # anchor the legend at its top-right corner
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),  # add a box around the legend with black border
+    legend.box.background = element_blank(),  # remove legend box background
+    legend.box.margin = margin(0, 0, 0, 0)  # remove margin around the legend box
+  ) 
+
+tcc_plot
+```
+
+
+# cohens d
+
+```{r}
+pf_items <- c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+              "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+              "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+              "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+              "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53")
+
+
+data_es <-  data_complete %>% 
+  mutate(t_corrected = as.numeric(out[[spec_promis]]$theta_corrected * 10 + 50),
+         theta_corrected =as.numeric(out[[spec_promis]]$theta_corrected),
+         t_purified = as.numeric(out[[spec_promis]]$theta_purified * 10 + 50),
+         t_promis = as.numeric(t_promis),
+         country = case_match(country,
+                              "arg" ~ "Argentina", 
+                              "usa" ~ "USA", 
+                              "ger" ~ "Germany")) %>% 
+  dplyr::select(
+    country,
+    t_promis,
+    t_purified,
+    t_corrected,
+    theta_corrected,
+    country_vector,
+    age,
+    pf_items) 
+
+data_es_usa_ger  <- data_es %>% filter(country %in% c("USA", "Germany")) 
+d_usa_ger <- effectsize::cohens_d(t_corrected ~ country, data = data_es_usa_ger)
+t.test(t_corrected ~ country, data = data_es_usa_ger)
+
+data_es_usa_arg  <- data_es %>% filter(country %in% c("USA", "Argentina")) 
+d_usa_arg <- effectsize::cohens_d(t_corrected ~ country, data = data_es_usa_arg)
+t.test(t_corrected ~ country, data = data_es_usa_arg)
+
+
+data_es_ger_arg  <- data_es %>% filter(country %in% c("Germany", "Argentina"))
+d_ger_arg <- effectsize::cohens_d(t_corrected ~ country, data = data_es_ger_arg)
+t.test(t_corrected ~ country, data = data_es_ger_arg)
+
+```
+
+
+```{r}
+data_es %>% 
+  group_by(country) %>% 
+  summarize(mean_corrected = mean(t_corrected),
+            mean_baseline = mean(t_promis),
+            mean_theta = mean(theta_corrected))
+
+data_es %>% 
+  group_by(country) %>% 
+              summarize(mean_theta = mean(theta_corrected)) 
+d_usa_ger
+d_usa_arg
+d_ger_arg
+```
+
+
+
+
+#  Distribution Plot of T-Scores
+
+```{r}
+# Save the current palette
+oldPalette <- palette()
+
+# Define your color-friendly palette
+newPalette <- c("black", "orange", "purple")
+
+# Set the new palette
+palette(newPalette)
+```
+
+## a) Facet Wrap ~ Country
+
+### Create Vector with Ceiling items
+```{r}
+data_viz <- data_complete %>% 
+  mutate(t_corrected = as.numeric(out[[spec_promis]]$theta_corrected * 10 + 50),
+         t_purified = as.numeric(out[[spec_promis]]$theta_purified * 10 + 50),
+         t_promis = as.numeric(t_promis),
+         country = case_match(country,
+                              "arg" ~ "Argentina", 
+                              "usa" ~ "USA", 
+                              "ger" ~ "Germany")) %>% 
+  dplyr::select(
+    country,
+    t_promis,
+    t_purified,
+    t_corrected,
+    country_vector,
+    age,
+    pf_items)
+
+data_viz_long <- data_viz %>% 
+  pivot_longer(cols = t_promis:t_corrected,
+               names_to = "version") %>% 
+  mutate(version = case_match(
+    version,
+    "t_corrected" ~ "Corrected",
+    "t_purified" ~ "Purified",
+    "t_promis" ~ "Baseline"
+  ))
+
+data_range <- range(data_viz$t_promis, na.rm = TRUE)
+
+data_viz_long %>% 
+  ggplot(aes(x = value, color = interaction(country, version, sep = "-"), linetype = interaction(country, version, sep = "-"))) +
+  geom_density(alpha = 0.6, adjust = 1) +  # Adjust parameter controls smoothness
+  scale_color_manual(values = c(
+    "USA-Baseline" = "black", 
+    "Argentina-Baseline" = "purple", 
+    "Germany-Baseline" = "orange",
+    "USA-Corrected" = "grey", 
+    "Argentina-Corrected" = "purple", 
+    "Germany-Corrected" = "orange",
+    "USA-Purified" = "darkgrey", 
+    "Argentina-Purified" = "purple", 
+    "Germany-Purified" = "orange"
+  )) +
+  scale_linetype_manual(values = c(
+    "USA-Baseline" = "solid", 
+    "Argentina-Baseline" = "solid", 
+    "Germany-Baseline" = "solid",
+    "USA-Corrected" = "dashed", 
+    "Argentina-Corrected" = "dashed", 
+    "Germany-Corrected" = "dashed",
+    "USA-Purified" = "dotted", 
+    "Argentina-Purified" = "dotted", 
+    "Germany-Corrected" = "dotted"
+  )) +
+  scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80),
+                     limits = c(data_range[1] - 10, data_range[2] + 10)) +
+  labs(
+    x = 'T-scores',
+    y = 'Density',
+    title = 'Distribution of PROMIS Physical Function T-Scores',
+    color = "Country and Model",
+    linetype = "Country and Model"
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = c(.999, .999),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),
+    legend.box.background = element_blank(),
+    legend.box.margin = margin(0, 0, 0, 0)
+  ) + facet_wrap(~country)
+
+```
+
+## b) In one Plot
+```{r}
+t_score_distribution_baseline_corrected <- data_viz_long %>% 
+  ggplot(aes(x = value, color = interaction(country, version, sep = "-"), linetype = interaction(country, version, sep = "-"))) +
+  geom_density(alpha = 0.6, adjust = 1) +  # Adjust parameter controls smoothness
+  scale_color_manual(values = c(
+    "USA-Baseline" = "black", 
+    "Argentina-Baseline" = "purple", 
+    "Germany-Baseline" = "orange",
+    "USA-Corrected" = "black", 
+    "Argentina-Corrected" = "purple", 
+    "Germany-Corrected" = "orange"
+  )) +
+  scale_linetype_manual(values = c(
+    "USA-Baseline" = "solid", 
+    "Argentina-Baseline" = "solid", 
+    "Germany-Baseline" = "solid",
+    "USA-Corrected" = "dashed", 
+    "Argentina-Corrected" = "dashed", 
+    "Germany-Corrected" = "dashed"
+  )) +
+  scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80), limits = c(data_range[1] - 10, data_range[2] + 10)) +
+  labs(
+    x = 'T-scores',
+    y = 'Density',
+    title = 'Distribution of PROMIS Physical Function T-Scores',
+    color = "Country and Model",
+    linetype = "Country and Model"
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = c(.999, .999),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),
+    legend.box.background = element_blank(),
+    legend.box.margin = margin(0, 0, 0, 0)
+  ) 
+t_score_distribution_baseline_corrected
+
+```
+
+
+```{r}
+plot_grid(t_score_distribution_baseline_corrected,
+          bland_altman_baseline_corrected,
+          ncol = 1)
+```
+
+## c) With Medians
+
+```{r}
+# Calculate median for each country
+medians <- data_viz %>%
+  group_by(country) %>%
+  dplyr::summarize(median_t_promis = median(t_promis)) 
+
+# Initialize an empty data frame to store density at medians
+density_at_medians <- data.frame(country = character(), 
+                                 median_t_promis = numeric(),
+                                 density = numeric())
+
+# Calculate the density at these median points for each country
+for (country_name in unique(data_viz$country)) {
+  data_country <- data_viz[data_viz$country == country_name, ]
+  density_obj <- density(data_country$t_promis)
+  
+  median_val <- medians$median_t_promis[medians$country == country_name]
+  median_density <- approx(density_obj$x, density_obj$y, xout = median_val)$y
+  
+  density_at_medians <- rbind(density_at_medians, data.frame(country = country_name, median_t_promis = median_val, density = median_density))
+}
+# Find the range of your data
+data_range <- range(data_viz$t_promis, na.rm = TRUE)
+
+# Plotting
+distribution_plot_baseline <- data_viz %>%
+  ggplot(aes(x = t_promis, group = country)) +
+  geom_density(aes(color = country, linetype = country), alpha = 0.6, adjust = 1) +  # adjust parameter controls smoothness
+  geom_segment(data = density_at_medians, aes(x = median_t_promis, xend = median_t_promis, y = 0, yend = density, color = country), linetype = "dashed") +
+  scale_color_manual(values = c("USA" = "black", "Argentina" = "purple", "Germany" = "orange")) +
+  scale_linetype_manual(values = c("USA" = "solid", "Argentina" = "dotted", "Germany" = "dashed")) +
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80), limits = c(data_range[1] - 10, data_range[2] + 10)) +  # Extend the x-axis limits
+  labs(
+    x = 'T-scores',
+    y = 'Density',
+    title = 'Distribution of PROMIS Physical Function T-Scores',
+    color = "Country",
+    linetype = "Country"
+  ) +
+  guides(
+    #linetype = guide_legend(title = NULL)  # Uncomment this to remove linetype legend title
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = c(.999, .999),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),
+    legend.box.background = element_blank(),
+    legend.box.margin = margin(0, 0, 0, 0)
+  )
+
+### Corrected
+
+# Calculate median for each country
+medians <- data_viz %>%
+  group_by(country) %>%
+  dplyr::summarize(median_t_corrected = median(t_corrected)) 
+
+# Initialize an empty data frame to store density at medians
+density_at_medians <- data.frame(country = character(), 
+                                 median_t_corrected = numeric(),
+                                 density = numeric())
+
+# Calculate the density at these median points for each country
+for (country_name in unique(data_viz$country)) {
+  data_country <- data_viz[data_viz$country == country_name, ]
+  density_obj <- density(data_country$t_corrected)
+  
+  median_val <- medians$median_t_corrected[medians$country == country_name]
+  median_density <- approx(density_obj$x, density_obj$y, xout = median_val)$y
+  
+  density_at_medians <- rbind(density_at_medians, data.frame(country = country_name, median_t_corrected = median_val, density = median_density))
+}
+# Find the range of your data
+data_range <- range(data_viz$t_corrected, na.rm = TRUE)
+
+# Plotting
+distribution_plot_corrected <- data_viz %>%
+  ggplot(aes(x = t_corrected, group = country)) +
+  geom_density(aes(color = country, linetype = country), alpha = 0.6, adjust = 1) +  # adjust parameter controls smoothness
+  geom_segment(data = density_at_medians, aes(x = median_t_corrected, xend = median_t_corrected, y = 0, yend = density, color = country), linetype = "dashed") +
+  scale_color_manual(values = c("USA" = "black", "Argentina" = "purple", "Germany" = "orange")) +
+  scale_linetype_manual(values = c("USA" = "solid", "Argentina" = "dotted", "Germany" = "dashed")) +
+  viridis::scale_fill_viridis(discrete = TRUE) +
+  scale_x_continuous(breaks = c(20, 30, 40, 50, 60, 70, 80), limits = c(data_range[1] - 10, data_range[2] + 10)) +  # Extend the x-axis limits
+  labs(
+    x = 'T-scores',
+    y = 'Density',
+    title = 'Distribution of PROMIS Physical Function T-Scores',
+    color = "Country",
+    linetype = "Country"
+  ) +
+  guides(
+    #linetype = guide_legend(title = NULL)  # Uncomment this to remove linetype legend title
+  ) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    legend.position = c(.999, .999),
+    legend.justification = c("right", "top"),
+    legend.background = element_rect(color = "black", fill = "white", size = 0.5),
+    legend.box.background = element_blank(),
+    legend.box.margin = margin(0, 0, 0, 0)
+  )
+
+plot_grid(distribution_plot_baseline, distribution_plot_corrected, ncol = 1, align = 'v')
+```

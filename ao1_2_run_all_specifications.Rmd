@@ -1,0 +1,567 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitile: "2.0 Run multiverseDIF()"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      lwd = 2,
+                      out.width = "100%",
+                      fig.width=8, 
+                      fig.height=8,
+                      fig.align = "center",
+                      dpi = 300)
+
+library(haven)
+library(lordif)
+library(tidyverse)
+library(readxl)
+library(arsenal) 
+library(summarytools) 
+library(hrbrthemes)
+library(cowplot)
+library(janitor)
+library(car)
+library(lavaan)
+library(semPlot)
+library(psych)
+library(nFactors)
+library(kableExtra)
+library(doParallel)
+library(gpttools)
+library(plyr)
+library(reshape)
+library(mirt)
+library(mirtCAT)
+library(rms)
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(pander)
+library(raincloudplots)
+library(dplyr)
+options(scipen = 999)
+
+# Source helper functions
+source("R/helper-functions.R")
+source("R/estimate_parameters.R")
+source("R/prepare_promis_parameters.R")
+source("R/select_promis_parameters.R")
+source("R/reest_model.R")
+source("R/DIF_models.R")
+```
+
+# 1. Setup
+
+## Data for analyses
+
+## Load RDA with data from previous step
+```{r}
+load("data/data_complete.rda")
+
+pars <- read.csv("data/PROMIS_PF_parameters_pertubated.csv") # pertubated item parameters, cannot be shared and needs to be obtained from PROMIS
+
+# All ceiling items
+pf_items <- c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+              "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+              "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+              "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+              "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53")
+
+# remove non-ceiling items from data
+data_clean <- data_complete %>% 
+  mutate(sample_id = respondent_id) %>% 
+  dplyr::select(sample_id, country, age, all_of(pf_items)) 
+
+# filter the data by the countries in the grouping vector
+grouping_vector <- c("usa", "ger", "arg")
+
+dat_usa_ger_arg <- filter_data(data_clean, 
+                               countries = grouping_vector)
+```
+
+## Prepare PROMIS Parameters
+```{r}
+parameters_promis <- prepare_promis_parameters(pars = pars, 
+                                               pf_items = pf_items, 
+                                               data = dat_usa_ger_arg)
+```
+
+
+## Workflow `multiverseDIF()`
+
+1. Estimate Baseline Models 
+a. with PROMIS US Parameters
+b. with mirt::multigroup() based on data (similar to lordif)
+
+2. Iterative Ordinal Logistic Regression DIF assessment
+- Goal: identify items with DIF
+- similar to lordif
+- calculate values for various criteria (R2,β-change, Likelihood-Ratio Test)
+
+3. Estimate Corrected Models 
+These models have been corrected for DIF (using either item parameters of DIF items reestimated in country samples, or US Baseline sample)
+
+4. Comparison of baseline and corrected models
+- item parameter
+- expected scores
+- theta distribution
+
+<br>
+
+
+### `execute_multiverseDIF()` 
+
+```{r}
+execute_multiverseDIF <- function(
+    criterion = c(
+      "lr", 
+      "lr_bon",
+      "lr_ben",
+      "beta", 
+      "CoxSnell",  
+      "Nagelkerke", 
+      "McFadden"),
+    correction
+)
+{
+  criterion = match.arg(criterion) # matches the criterion
+  flagged_items_saved = 1          # Initial placeholder
+  flagged_items = "Initialize"     # Initial placeholder
+  
+  results = list()                 # save results in list
+  
+  counter <- 0                     # count number of while loops
+  while (!identical(flagged_items, # are the flagged items identical to items flagged before?
+                    flagged_items_saved)){
+    
+    flagged_items_saved <- flagged_items # a vector, eg c(PFM1, PFM4) breaks if all items flagged
+    
+   # print_cyan(paste0("Specification ", i, "/", nrow(specifications)))
+    
+   # print(paste("Estimate Model without Flagged Items"))
+    
+    if(length(flagged_items) <= 33 | length(flagged_items)  == 0){  # here at least 2 anchor items
+      
+      corrected_model <- reest_model(flagged_items, 
+                                     dat = dat,
+                                     grouping_vector = grouping_vector,
+                                     parameters = parameters) 
+    } else{
+      #print_red("Not enough items without DIF --> NEXT")
+      next
+    }
+    #print("__________________________________________________________________________")
+    
+    #print(paste ("Fit regression models for country comparison: ",                specifications$wf_1_comparison[i]))
+    
+    reg_dat <- prepare_regression_data(dat, items, corrected_model)
+    
+    if (correction == "no") {
+      DIF_model <- llply(names(items), function(x) DIF_models(item = x, 
+                                                              data = reg_dat)) # fit DIF models for each item
+    } else if (correction == "age"){
+      DIF_model <- llply(names(items), function(x) DIF_models_age(item = x, 
+                                                                  data = reg_dat)) # fit DIF models for each item
+    }
+    # print("calculate criteria")
+    
+    print(paste0("calculate criteria based on: ", 
+                 paste(
+                   specifications$wf_1_comparison[i], 
+                   paste(specifications$hf_1_correction[i], "correction"),
+                   specifications$hf_2_parameter_vector[i],
+                   specifications$hf_3_criterion[i],
+                   specifications$hf_4_threshold[i],
+                   sep = " & ", collapse = "")))
+    
+    LR_tests <- ldply(DIF_model, function(x) lrtest(x[[1]],x[[3]])$stats) %>%  # The lrtest function does likelihood ratio tests for two nested models, from fits that have stats components with "Model L.R." values. For models such as psm, survreg, ols, lm which have scale parameters, it is assumed that scale parameter for the smaller model is fixed at the estimate from the larger model (see the example).
+      cbind(.id = names(items))
+    
+    #lordif
+    lordif_values <- ldply(DIF_model, function(x) {
+      
+      #pseudo r2s
+      data <- data.frame(
+        deviance0          = x[[3]][["deviance"]][1],
+        deviance1          = x[[3]][["deviance"]][2],
+        deviance2          = x[[2]][["deviance"]][2],
+        deviance3          = x[[1]][["deviance"]][2],
+        pseudo1.CoxSnell   = 1-exp(diff(x[[3]]$deviance)/nrow(items)),
+        pseudo2.CoxSnell   = 1-exp(diff(x[[2]]$deviance)/nrow(items)),
+        pseudo3.CoxSnell   = 1-exp(diff(x[[1]]$deviance)/nrow(items))
+      )
+      data$pseudo1.Nagelkerke <- data$pseudo1.CoxSnell/(1-exp(-data$deviance0/nrow(items)))
+      data$pseudo2.Nagelkerke <- data$pseudo2.CoxSnell/(1-exp(-data$deviance0/length(items)))
+      data$pseudo3.Nagelkerke <- data$pseudo3.CoxSnell/(1-exp(-data$deviance0/length(items)))
+      data$pseudo1.McFadden   <- 1-data$deviance1/data$deviance0
+      data$pseudo2.McFadden   <- 1-data$deviance2/data$deviance0
+      data$pseudo3.McFadden   <- 1-data$deviance3/data$deviance0
+      data$pseudo12.CoxSnell  <-round(data$pseudo2.CoxSnell  -data$pseudo1.CoxSnell,4)   # Model 2 (2 vs 1 = uniform DIF)
+      data$pseudo13.CoxSnell  <-round(data$pseudo3.CoxSnell  -data$pseudo1.CoxSnell,4)   # Model 1 (1 vs 3 = total DIF)
+      data$pseudo23.CoxSnell  <-round(data$pseudo3.CoxSnell  -data$pseudo2.CoxSnell,4)   # Model 3 (3 vs 2 = non-uniform DIF)
+      
+      data$pseudo12.Nagelkerke<-round(data$pseudo2.Nagelkerke-data$pseudo1.Nagelkerke,4) # Model 2 (2 vs 1 = uniform DIF)
+      data$pseudo13.Nagelkerke<-round(data$pseudo3.Nagelkerke-data$pseudo1.Nagelkerke,4) # Model 1 (1 vs 3 = total DIF)
+      data$pseudo23.Nagelkerke<-round(data$pseudo3.Nagelkerke-data$pseudo2.Nagelkerke,4) # Model 3 (3 vs 2 = non-uniform DIF)
+      
+      data$pseudo12.McFadden  <-round(data$pseudo2.McFadden  -data$pseudo1.McFadden,4)   # Model 2 (2 vs 1 = uniform DIF)
+      data$pseudo13.McFadden  <-round(data$pseudo3.McFadden  -data$pseudo1.McFadden,4)   # Model 1 (1 vs 3 = total DIF)
+      data$pseudo23.McFadden  <-round(data$pseudo3.McFadden  -data$pseudo2.McFadden,4)   # Model 3 (3 vs 2 = non-uniform DIF)
+      
+      #beta change
+      data$beta12 <- round(abs((x[[2]]$coefficients[["theta"]]-x[[3]]$coefficients[["theta"]])/x[[3]]$coefficients[["theta"]]),4)
+      data$df12<-length(table(grouping_vector))-1
+      data$df13<-2*(length(table(grouping_vector))-1)
+      data$df23<-length(table(grouping_vector))-1
+      
+      #chisquare
+      data$chi12<-round(1-pchisq(data$deviance1-data$deviance2, data$df12),4)
+      data$chi13<-round(1-pchisq(data$deviance1-data$deviance3, data$df13),4)
+      data$chi23<-round(1-pchisq(data$deviance2-data$deviance3, data$df23),4)
+      
+      return(data)
+    }) %>% 
+      cbind(.id = names(items))
+    
+    result = merge_recurse(list(
+      LR_tests, 
+      lordif_values),
+      by=".id")
+    
+    # print(paste("Criterion:", criterion))  
+    flagged_items <- switch(criterion,
+                            
+                            #Beta
+                            beta = result$.id[abs(result$beta12)>threshold], 
+                            
+                            # Chi-Square
+                            lr = result$.id[result$P < threshold],
+                            lr_bon = result$.id[result$P < threshold/length(items)],
+                            lr_ben = result$.id[p.adjust(result$P, 
+                                                         method = p.adjust.methods, 
+                                                         n = length(result$P)) < threshold],
+                            #lordif
+                            CoxSnell  = result$.id[result$pseudo13.CoxSnell > threshold],
+                            Nagelkerke = result$.id[result$pseudo13.Nagelkerke > threshold],
+                            McFadden   = result$.id[result$pseudo13.McFadden > threshold]
+                            
+    )
+    
+    counter = counter + 1
+    if (counter > 10) {
+      break
+    }
+    
+    print_red(paste(length(flagged_items), "Items flagged for DIF: ", paste(flagged_items, collapse=", "))) # print items flagged for DIF
+    
+    results[[1]] = list( # if all iterations should be saved: results[[length(results)+1]]
+      
+      corrected_model = list(model = corrected_model, # corrected model
+                             parameter = mod2values(corrected_model),
+                             thetas = fscores(corrected_model),
+                             theta_se = fscores(corrected_model, full.scores.SE = T)[, "SE_F1"] %>% as.vector(),
+                             ets = mirt::expected.test(corrected_model, 
+                                                       Theta = fscores(corrected_model), 
+                                                       group = 1)
+                             #coefs = coef(corrected_model, IRTpars = TRUE)
+      ), 
+      
+      DIF_model = list(model = DIF_model,
+                       data = reg_dat
+      ),
+      Criteria = result, 
+      Flagged_items = flagged_items)
+  }
+  
+  names(results) = "last iteration"  #paste("iteration", 1:length(results), sep = "_") # if all should be saved
+  
+  return(invisible(results))
+}
+```
+
+# 2. Multiverse Analysis
+
+### Setup
+```{r}
+# All ceiling items
+pf_items <- c("PFM1", "PFM2", "PFM3", "PFM4", "PFM6", "PFM7", "PFM9", "PFM10", 
+              "PFM12", "PFM15", "PFM16", "PFM17", "PFM18", "PFM19", "PFM21", 
+              "PFM23", "PFM25", "PFM26", "PFM27", "PFM28", "PFM29", "PFM32", 
+              "PFM33", "PFM34", "PFM35", "PFM36", "PFM37", "PFM38", "PFM40", 
+              "PFM43", "PFM44", "PFM46", "PFM49", "PFM51", "PFM53")
+
+# remove non-ceiling items from dat
+data_clean <- data_complete %>% 
+  mutate(sample_id = respondent_id) %>% 
+  dplyr::select(sample_id, country, age, all_of(pf_items))
+```
+
+
+
+```{r}
+# Estimate parameters
+multigroup_parameters_usa_ger_arg <- estimate_parameters(data_clean , c("usa", "ger", "arg"))
+multigroup_parameters_usa_ger     <- estimate_parameters(data_clean, c("usa", "ger"))
+multigroup_parameters_usa_arg     <- estimate_parameters(data_clean, c("usa", "arg"))
+multigroup_parameters_ger_arg     <- estimate_parameters(data_clean, c("ger", "arg"))
+
+## Which factors
+wf_1_comparison = c("usa-ger-arg", 
+                    "usa-ger", 
+                    "usa-arg", 
+                    "ger-arg"
+)
+
+# How factors
+hf_1_correction <- c("age", 
+                     "no"
+)
+
+hf_2_parameter_vector <- c("parameters_multigroup",
+                           "parameters_promis"
+                           
+)
+
+hf_3_criterion   <- c(
+  #.05
+  "lr",
+  "lr_bon", 
+  "lr_ben",
+  #.01
+  
+  # beta
+  "beta", 
+  
+  # r2
+  "CoxSnell",   
+  "Nagelkerke", 
+  "McFadden")   
+
+# threshold
+
+hf_4_threshold <- c(
+  # chi
+  0.01,
+  #0.05,
+  
+  # r2
+  0.02,
+  0.03,
+  0.05,
+  
+  # beta 
+  #0.01,
+  # 0.05,
+  0.1
+)
+
+### Construct all specifications
+specifications_grid <- expand.grid(
+  wf_1_comparison = wf_1_comparison, 
+  hf_1_correction = hf_1_correction, 
+  hf_2_parameter_vector = hf_2_parameter_vector, 
+  hf_3_criterion = hf_3_criterion,
+  hf_4_threshold = hf_4_threshold
+)  %>% 
+  filter(
+    hf_3_criterion %in% c("lr", 
+                          "lr_bon", 
+                          "lr_ben") & hf_4_threshold %in% c(0.01, 
+                                                            0.05) |
+      hf_3_criterion %in% c( "CoxSnell",  
+                             "Nagelkerke", 
+                             "McFadden",
+                             "pseudo13.CoxSnell_03",  
+                             "pseudo13.Nagelkerke_03", 
+                             "pseudo13.McFadden_03")  & hf_4_threshold %in% c(0.02, 
+                                                                              0.03,
+                                                                              0.05) |
+      hf_3_criterion %in% c("beta") & hf_4_threshold %in% c(#0.01,
+        0.05,
+        0.1)
+  )
+
+number_specs <- nrow(specifications_grid)
+number_specs
+```
+
+#### Select rows
+```{r}
+specifications <- data.frame(specifications_grid)
+```
+
+### Run for loop
+```{r}
+set.seed(42) # The question from The Hitchhiker's Guide to the Galaxy was: What is the best set seed?
+out <- list()
+
+tictoc::tic()
+for (i in 1:nrow(specifications)) {
+  
+  dat <- as.data.frame(data_clean)
+  
+  #wf 1
+  if(specifications$wf_1_comparison[i] == "usa-ger") { 
+    
+    grouping_vector <- c("usa", "ger")
+    dat <- filter_data(dat, 
+                       countries = grouping_vector)
+    items <- filter_items(dat, 
+                          countries = grouping_vector)
+    parameters_multigroup <- multigroup_parameters_usa_ger
+    
+  } else {
+    if(specifications$wf_1_comparison[i] == "usa-arg") {
+      
+      grouping_vector <- c("usa", "arg")
+      dat <- filter_data(dat, 
+                         countries = grouping_vector)
+      items <- filter_items(dat, 
+                            countries = grouping_vector)
+      
+      parameters_multigroup <- multigroup_parameters_usa_arg
+      
+    } else { 
+      if(specifications$wf_1_comparison[i] == "ger-arg") {
+        
+        grouping_vector <- c("ger", "arg")
+        dat <- filter_data(dat, 
+                           countries = grouping_vector)
+        dat <- dat %>% dplyr::select(sample_id, country, age, all_of(pf_items))
+        items <- filter_items(dat, 
+                              countries = grouping_vector)
+        
+        parameters_multigroup <- multigroup_parameters_ger_arg
+        
+      } else { 
+        if(specifications$wf_1_comparison[i] == "usa-ger-arg") {
+          
+          grouping_vector <- c("usa", "ger", "arg")
+          dat <- filter_data(dat, 
+                             countries = grouping_vector)
+          items <- filter_items(dat, 
+                                countries = grouping_vector)
+          parameters_multigroup <- multigroup_parameters_usa_ger_arg
+          
+        }
+      }
+    }
+  }
+  
+  ######################## hf_1_correction ##############################
+  
+  if(specifications$hf_1_correction[i] == "age") {
+    correction <- "age"
+    
+  } else {
+    if (specifications$hf_1_correction[i] == "no") {
+      correction <- "no"
+    }
+  }
+  
+  ######################## hf_2_parameter_vector ##############################
+  if (specifications$hf_2_parameter_vector[i] == "parameters_multigroup") {
+    parameters <- parameters_multigroup
+    threshold <- specifications$hf_4_threshold[i]
+  } else {
+    if (specifications$hf_2_parameter_vector[i] == "parameters_promis") {
+      parameters <- select_promis_parameters(parameters_promis, grouping_vector)
+      threshold <- specifications$hf_4_threshold[i]
+    }
+  }
+  
+  ######################## hf_3_criterion ##############################
+  if (specifications$hf_3_criterion[i] == "lr") {
+    criterion <- "lr"
+    
+    results <- execute_multiverseDIF(
+      criterion = criterion,
+      correction = correction)
+    
+  } else {
+    if (specifications$hf_3_criterion[i] == "lr_bon") {
+      criterion <- "lr_bon"
+      
+      results <- execute_multiverseDIF(
+        criterion = criterion,
+        correction = correction)
+      
+    } else {
+      if (specifications$hf_3_criterion[i] == "lr_ben") {
+        criterion <- "lr_ben"
+        
+        results <- execute_multiverseDIF(
+          criterion = criterion,
+          correction = correction)
+        
+      } else {
+        if (specifications$hf_3_criterion[i] == "beta") {
+          criterion <- "beta"
+          
+          results <- execute_multiverseDIF(
+            criterion = criterion,
+            correction = correction)
+          
+        } else {
+          if (specifications$hf_3_criterion[i] == "CoxSnell") {
+            criterion <- "CoxSnell"
+            
+            results <- execute_multiverseDIF(
+              criterion = criterion,
+              correction = correction)
+            
+          } else {
+            if (specifications$hf_3_criterion[i] == "Nagelkerke") {
+              criterion <- "Nagelkerke"
+              
+              results <- execute_multiverseDIF(
+                criterion = criterion,
+                correction = correction)
+              
+            } else {
+              if (specifications$hf_3_criterion[i] == "McFadden") {
+                criterion <- "McFadden"
+                
+                results <- execute_multiverseDIF(
+                  criterion = criterion,
+                  correction = correction)
+                
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  out[[i]] <- list(specification = specifications[i, ], 
+                   results = results)
+}
+
+tictoc::toc()
+```
+
+### Save Results
+Normally we would save the results, but as we used pertubated item parameters, we do not override the specification results already provided.
+```{r}
+#save(out, file = "data/specifications_.RData") 
+```
+

@@ -1,0 +1,235 @@
+---
+title: "Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults"
+subtitle: "4. DIF Analyses with lorDIF"
+author: "Constantin Yves Plessen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+    highlight: pygment
+    keep_md: no
+    theme: cerulean
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse = FALSE,
+                      comment = "",
+                      strip.white = TRUE,
+                      warning = FALSE, #we exclude warnings to improve readability
+                      messages = FALSE,
+                      lwd = 2,
+                      out.width = "100%",
+                      fig.width=8, 
+                      fig.height=8,
+                      fig.align = "center",
+                      dpi = 300)
+
+library(haven)
+library(lordif)
+body(plot.lordif)[[9]] <- NULL #https://stackoverflow.com/questions/52904512/r-lordif-rmarkdown
+
+library(tidyverse)
+library(readxl)
+library(arsenal) 
+library(summarytools) 
+library(hrbrthemes)
+library(janitor)
+library(car)
+library(lavaan)
+library(semPlot)
+library(psych)
+library(nFactors)
+library(kableExtra)
+
+
+# Save the current palette
+oldPalette <- palette()
+
+# Define your color-friendly palette
+newPalette <- c("black", "orange", "purple")
+
+# Set the new palette
+palette(newPalette)
+
+options(scipen = 999)
+```
+
+# Overview
+
+This document performs the DIF Analyses used in the section: Identification of Uniform DIF in Select PROMIS Items: Findings from Lordif Analysis.
+
+# Load & Setup
+
+## Data for analyses
+
+```{r}
+load("data/data_complete.rda")
+```
+
+<br>
+
+# DIF USA - Germany - Argentina
+
+```{r}
+data_usa_ger_arg <- data_complete
+
+## Select only PFM items
+items_usa_ger_arg <- data_usa_ger_arg %>% 
+  dplyr::select(starts_with("PF")) %>% 
+  dplyr::select_if(~ !any(is.na(.))) # remove items with missing values
+
+##Create language vector
+language_usa_ger_arg <- dplyr::recode(data_usa_ger_arg$country, 
+                                      usa = "1", 
+                                      ger = "2",
+                                      arg = "3")
+```
+
+<br>
+
+## Results
+
+```{r results=FALSE }
+items <- as.data.frame(items_usa_ger_arg)
+group <- language_usa_ger_arg
+dif_result_nr2 <- lordif::lordif(items, 
+                                 group, 
+                                 criterion = "R2",
+                                 pseudo.R2 = "Nagelkerke",
+                                 R2.change = 0.021, # we chose this threshold to match the items identified from the multiverse
+                                 minCell = 5)
+```
+
+
+```{r}
+summary(dif_result_nr2)
+```
+
+<br>
+
+## Plot Results
+
+### Figure 1
+
+```{r echo = FALSE, fig.keep=1}
+plot(dif_result_nr2)
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"))
+```
+
+Note. This graph shows smoothed histograms of the physical function levels of study participants from the USA (black solid line), Germany (orange dashed line), and Argentina (purple dotted line) as measured by the PROMIS Physical Function scale (T-Scores) based on the baseline model using the same parameters across countries.  There is broad overlap in the distributions, though individuals from the USA and Germany demonstrated lower levels of Physical Function than individuals form Argentina. There was a stronger ceiling effect for the USA distribution at T-Score = 75 than for Germany or Argentina, which increased to T = 80 in the corrected model. 
+<br>
+
+### Figure 2
+
+Fig. S5: Graphical display of the item PFM16 “Are you able to pass a 20-pound (10 kg) turkey or ham to other people at the table?” which shows uniform DIF with respect to country.
+
+```{r echo = FALSE, fig.keep=2}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 10,
+              cex = 0.5,
+              lwd = 6)
+```
+
+
+Note. The top-left graph presents the item characteristic curves (ICCs) for the item, contrasting the USA (black), Germany (orange dashed), and Argentina (purple dotted). The top-right graph illustrates the absolute differences in ICCs between the USA and the other two countries, highlighting that the major disparities for the USA with both Germany and Argentina occur at lower levels of physical function (theta). The bottom-left graph depicts the item response functions for each group, derived from demographic-specific item parameter estimates (slope and category threshold values), which are also annotated on the graph. Finally, the bottom-right graph displays the weighted absolute difference in ICCs (referencing the top-right graph) based on the score distribution of the focal group, the USA, showing a negligible impact.
+
+<br>
+
+### Figure 3
+
+Fig. S6: Graphical display of the item PFM33 “Are you able to walk across a balance beam?” which shows uniform DIF with respect to country.
+
+```{r echo = FALSE, fig.keep=3}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 10,
+              cex = 1,
+              lwd = 1)
+```
+
+Note. The upper-left graph illustrates the item characteristic curves (ICCs) for the item, comparing the USA (black), Germany (orange dashed), and Argentina (purple dotted). The upper-right graph portrays the absolute differences in ICCs between the USA and the other two countries, showing that the primary differences are at lower levels with Germany and at medium levels with Argentina in terms of physical function (theta). The lower-left graph presents the item response functions for each group, based on demographic-specific item parameter estimates (slope and category threshold values), which are also indicated on the graph. Finally, the lower-right graph demonstrates the weighted absolute difference in ICCs (from the upper-right graph) according to the score distribution of the focal group, the USA, suggesting a minimal impact.
+
+<br>
+
+### Figure 4
+
+Fig. S7: Graphical display of the item PFM46 “Are you able to pull a sled or a wagon with two children (total 100 lbs/50 kg) for 100 yards (100 m)?” which shows uniform DIF with respect to country.
+
+```{r echo = FALSE, fig.keep=4}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 10,
+              cex = 1,
+              lwd = 1)
+```
+
+Note. The top-left graph depicts the item characteristic curves (ICCs) for the item, showcasing comparisons between the USA (black), Germany (orange dashed), and Argentina (purple dotted). The top-right graph details the absolute differences in ICCs for the USA against Germany and Argentina, highlighting that the primary differences for Argentina compared to the other two nations occur at medium levels of physical function (theta). The bottom-left graph presents the item response functions for each group, derived from demographic-specific item parameter estimates (slope and category threshold values), which are also noted on the graph. Finally, the bottom-right graph displays the weighted absolute difference in ICCs (referenced in the top-right graph) based on the score distribution of the focal group, the USA, demonstrating a negligible impact.
+
+<br>
+
+### Figure 5
+
+Fig. S8: Graphical display of the item PFM51 “Are you able to swim laps for 30 minutes at a moderate pace?” which shows uniform DIF with respect to country.
+
+```{r echo = FALSE, fig.keep=5}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 10,
+              cex = 1,
+              lwd = 1)
+```
+
+Note. The upper-left graph displays the item characteristic curves (ICCs) for the item, contrasting the USA (black) with Germany (orange dashed) and Argentina (purple dotted). The upper-right graph demonstrates the absolute differences in ICCs for the USA compared to Germany and Argentina, revealing that the differences primarily occur at lower levels with Germany and at medium levels with Argentina in terms of physical function (theta). The lower-left graph presents the item response functions for each group, based on demographic-specific item parameter estimates (slope and category threshold values), also detailed on the graph. Finally, the lower-right graph illustrates the weighted absolute difference in ICCs (referenced in the upper-right graph) according to the score distribution of the focal group, the USA showing a minimal impact.
+
+<br>
+
+### Figure 6
+
+Fig. 5 Impact of DIF items on test characteristic curves
+
+```{r echo = FALSE, fig.keep=6}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 5,
+              cex = 1,
+              lwd = 1)
+```
+
+Note. These graphs show test characteristic curves (TCCs) for USA (black), Germany (orange dashed), and Argentina (purple dotted) using demographic–specific item parameter estimates. TCCs show the expected total scores for groups of items at each physical function level (theta). The graph on the left shows these curves for all of the items (both items with and without DIF), while the graph on the right shows these curves for the subset of these items found to have DIF. These curves suggest that at the overall test level there are some differences in the total expected score for individuals from all three countries. At the same level of ability (i.e., the same theta score on the x-axis), individuals from Germany obtained higher expected observed sum scores than while at the same level of ability individuals from Argentina had lower observed sum scores than the USA.
+
+<br>
+
+### Figure 7
+
+Fig. 6 Individual–level DIF impact.
+
+```{r echo = FALSE, fig.keep=7}
+dif_result_nr2 %>%
+  plot.lordif(labels = c("USA", "Germany", "Argentina"),
+              height = 12,
+              width = 5,
+              cex = 1,
+              lwd = 1)
+```
+
+Note. These graphs show the difference in score between using scores that ignore DIF and those that account for DIF. The graph on the left shows a box plot of these differences. The interquartile range, representing the middle 50% of the differences (bound between the bottom and top of the shaded box), range roughly from +0.02 to +0.03 with a median of approximately +0.01. In the graph on the right the same difference scores are plotted against the initial scores ignoring DIF (“initial theta”), separately for individuals from the USA, Germany, and Argentina. Guidelines are placed at 0.0 (solid line), i.e., no difference, and the mean of the differences (dotted line). The overall positive values for Germany indicate that accounting for DIF led to slightly lower scores while the overall negative values for Argentina indicate that accounting for DIF led to slightly higher scores. The negative values for the USA to the left of this graph indicate that accounting for DIF led to slightly higher scores for those with low physical function, while the positive values to the right indicate slightly lower scores for those with high physical function. The positive values for Germany to the left of this graph indicate that these effects were particularly pronounced in those with low physical function.
+<br>
+
+## Identified Items
+```{r}
+dif_identified_items <- colnames(items[dif_result_nr2$flag])
+dif_identified_items
+```

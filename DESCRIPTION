@@ -1,0 +1,21 @@
+Package: multiverseDIF
+Title: Code to Reproduce: Differential Item Functioning By Language on the new PROMIS® Physical Functioning Items 2.0 for Adults
+Version: 0.0.0.9000
+Authors@R: 
+    person("Constantin Yves", "Plessen", , "Yves.plessen@me.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-4907-3505"))
+Description: Code to reproduce all multiverse DIF analyses, figures and tables.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Depends: R (>= 2.10)
+Imports:
+    plyr,
+    dplyr,
+    mirt,
+    ggplot2,
+    mirtCAT,
+    rms,
+    tidyr
+LazyData: true
